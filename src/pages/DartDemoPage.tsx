@@ -38,6 +38,7 @@ const PULLBACK_PLATEAU_TOLERANCE = 8
 const TRUE_FORWARD_START_PIXELS = 8
 const MIN_FLICK_SPEED = 0.12
 const MAX_FLICK_SPEED = 2.2
+const MIN_CONTROL_FACTOR = 0.25
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
@@ -187,6 +188,7 @@ function DartDemoPage() {
     }
 
     const flickStartPoint = path[flickStartIndex]
+    const flickSegment = path.slice(flickStartIndex)
 
     const flickVectorX = releasePoint.x - flickStartPoint.x
     const flickVectorY = releasePoint.y - flickStartPoint.y
@@ -202,7 +204,14 @@ function DartDemoPage() {
 
     const pullSegment = path.slice(0, backIndex + 1)
     const pullSmoothnessPenalty = computeSmoothnessPenalty(pullSegment)
-    const pullQuality = Math.max(0, 1 - pullSmoothnessPenalty)
+    const pullStraightness = computePathStraightness(pullSegment)
+
+    const flickSmoothnessPenalty = computeSmoothnessPenalty(flickSegment)
+    const flickStraightness = computePathStraightness(flickSegment)
+
+    const pullControlPenalty = clamp(pullSmoothnessPenalty * 0.65 + (1 - pullStraightness) * 0.9, 0, 1)
+    const flickControlPenalty = clamp(flickSmoothnessPenalty * 0.45 + (1 - flickStraightness) * 0.7, 0, 1)
+    const pullQuality = Math.max(0, 1 - pullControlPenalty)
 
     // Longer pullback unlocks more effective flick power.
     const pullRoomFactor = clamp((pullback - edgeAdjustedMinPullback) / 120, 0, 1)
@@ -210,18 +219,21 @@ function DartDemoPage() {
 
     // Flick speed drives height strongly: faster = higher, slower = lower.
     const normalizedSpeed = clamp((flickSpeed - MIN_FLICK_SPEED) / (MAX_FLICK_SPEED - MIN_FLICK_SPEED), 0, 1)
-    const speedLift = Math.pow(normalizedSpeed, 1.3) * 220 * unlockedPower
+    const flickControlFactor = clamp(1 - flickControlPenalty * 0.35, MIN_CONTROL_FACTOR, 1)
+    const effectiveSpeed = normalizedSpeed * flickControlFactor
+    const speedLift = Math.pow(effectiveSpeed, 1.3) * 220 * unlockedPower
     const gravityDrop = Math.pow(1 - normalizedSpeed, 1.15) * 130
 
     // Flick angle adjusts aim left/right and contributes some lift when flicking upward.
     const upwardIntent = clamp(-flickVectorY, 0, 220)
-    const angleLift = upwardIntent * 0.22
+    const angleLift = upwardIntent * 0.26
 
-    // Flick angle adjusts aim left/right.
-    const lateralAdjust = flickVectorX * 0.55 * unlockedPower
+    // Flick direction should directly steer the throw result.
+    const directionalInfluence = clamp(0.8 + effectiveSpeed * 0.55, 0.8, 1.35)
+    const lateralAdjust = flickVectorX * 0.68 * unlockedPower * directionalInfluence
 
-    // Jerkier pullback increasingly degrades aim with random offset.
-    const jitterAmount = Math.pow(pullSmoothnessPenalty, 1.4) * 78
+    // Poor pullback (jerky and not straight) increases random aim error.
+    const jitterAmount = Math.pow(pullControlPenalty, 1.35) * 92
     const jitterX = (Math.random() * 2 - 1) * jitterAmount
     const jitterY = (Math.random() * 2 - 1) * jitterAmount
 
@@ -259,8 +271,29 @@ function DartDemoPage() {
           : 'jerky'
 
     setPullQualityLabel(
-      `Pull quality: ${qualityText}. Flick speed: ${normalizedSpeed.toFixed(2)}. Pullback: ${Math.round(pullback)}px.`,
+      `Pull: ${qualityText} (straight ${pullStraightness.toFixed(2)}). Flick speed: ${normalizedSpeed.toFixed(2)} (control ${flickControlFactor.toFixed(2)}, straight ${flickStraightness.toFixed(2)}). Pullback: ${Math.round(pullback)}px.`,
     )
+  }
+
+  function computePathStraightness(points: GesturePoint[]): number {
+    if (points.length < 2) {
+      return 0
+    }
+
+    const start = points[0]
+    const end = points[points.length - 1]
+    const netDistance = Math.hypot(end.x - start.x, end.y - start.y)
+
+    let traveledDistance = 0
+    for (let i = 1; i < points.length; i += 1) {
+      traveledDistance += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y)
+    }
+
+    if (traveledDistance < 0.001) {
+      return 0
+    }
+
+    return clamp(netDistance / traveledDistance, 0, 1)
   }
 
   function computeSmoothnessPenalty(points: GesturePoint[]): number {
