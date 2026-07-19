@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { Link } from 'react-router-dom'
+import baseballFieldTarget from '../assets/baseball-field-target.svg'
 
 type Point = { x: number; y: number }
 
@@ -395,18 +396,14 @@ function DartDemoPage() {
             onPointerUp={handlePointerEnd}
             onPointerCancel={handlePointerEnd}
             role="application"
-            aria-label="Target field with small, medium, and large dot targets"
+            aria-label="Baseball field target"
           >
-            {TARGETS.map((target) => (
-              <div
-                key={target.id}
-                className={`target-zone target-zone-${target.id}`}
-                style={{ left: `${target.center.x}px`, top: `${target.center.y}px` }}
-              >
-                <span className={`target-dot target-dot-${target.id}`} />
-                <span className="target-label">{target.id}</span>
-              </div>
-            ))}
+            <img
+              className="target-field-image"
+              src={baseballFieldTarget}
+              alt="Baseball field target"
+              draggable={false}
+            />
 
             {primaryAim ? (
               <div
