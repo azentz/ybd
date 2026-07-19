@@ -6,8 +6,12 @@
   "homepage": "https://azentz.github.io/ybd",
   "scripts": {
     "dev": "vite",
+    "dev:local-signal": "VITE_PEER_HOST=127.0.0.1 VITE_PEER_PORT=9000 VITE_PEER_SECURE=false VITE_PEER_PATH=/ VITE_PEER_KEY=peerjs vite --host 127.0.0.1 --port 5173",
+    "signaling": "peerjs --host 127.0.0.1 --port 9000 --path / --key peerjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
     "preview": "vite preview",
     "predeploy": "npm run build",
     "deploy": "gh-pages -d dist"
@@ -16,6 +20,7 @@
     "adapterjs": "^0.15.5",
     "dexie": "^4.4.4",
     "matter-js": "^0.20.0",
+    "peerjs": "^1.5.5",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router-dom": "^7.18.1",
@@ -24,6 +29,7 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/matter-js": "^0.20.2",
     "@types/node": "^24.13.2",
     "@types/react": "^19.2.17",
@@ -32,6 +38,7 @@
     "@vitejs/plugin-react": "^6.0.3",
     "gh-pages": "^6.3.0",
     "oxlint": "^1.71.0",
+    "peer": "^1.0.2",
     "typescript": "~6.0.2",
     "vite": "^8.1.1",
     "vite-plugin-pwa": "^1.3.0"

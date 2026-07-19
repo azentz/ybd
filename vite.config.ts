@@ -38,7 +38,7 @@ export default defineConfig({
         navigateFallback: '/ybd/offline.html',
       },
       devOptions: {
-        enabled: true,
+        enabled: false,
       },
     }),
   ],
