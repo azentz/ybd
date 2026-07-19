@@ -293,6 +293,28 @@ th {
   user-select: none;
 }
 
+.zone-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: auto;
+  z-index: 1;
+}
+
+.zone-overlay-shape {
+  fill-opacity: 0.26;
+  stroke-opacity: 0.95;
+  transition: fill-opacity 140ms ease, stroke-width 140ms ease, filter 140ms ease;
+  cursor: crosshair;
+}
+
+.zone-overlay-shape:hover {
+  fill-opacity: 0.88;
+  stroke-width: 2.4;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.35));
+}
+
 .target-zone {
   position: absolute;
   display: grid;
@@ -354,6 +376,7 @@ th {
   background: #256290;
   transform: translate(-50%, -50%);
   box-shadow: 0 0 0 2px #eef6ff;
+  z-index: 2;
 }
 
 .impact-dot {
@@ -367,6 +390,7 @@ th {
   font-size: 0.56rem;
   font-weight: 700;
   color: #fff;
+  z-index: 2;
 }
 
 .impact-dot-hit {

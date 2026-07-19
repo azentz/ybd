@@ -1,36 +1,27 @@
 import { useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { Link } from 'react-router-dom'
-import baseballFieldTarget from '../assets/baseball-field-target.svg'
-
-type Point = { x: number; y: number }
+import baseballFieldReference from '../assets/baseball-field-reference-02.svg'
+import {
+  BASEBALL_ZONES,
+  resolveBaseballZoneHit,
+  type BaseballZone,
+  type Point,
+  type ZoneShape,
+} from '../lib/baseballZoneModel'
 
 type ThrowResult = {
   id: string
   serial: number
   score: number
-  target: 'small' | 'medium' | 'large' | 'miss'
-  nearest: 'small' | 'medium' | 'large'
+  target: string
+  nearest: string
   impact: Point
 }
 
 type GesturePoint = Point & { t: number }
 
-type TargetDot = {
-  id: 'small' | 'medium' | 'large'
-  center: Point
-  radius: number
-  score: number
-}
-
 const FIELD_SIZE = 360
-const HIT_BUFFER = 14
-
-const TARGETS: TargetDot[] = [
-  { id: 'small', center: { x: Math.round(FIELD_SIZE * 0.25), y: Math.round(FIELD_SIZE * 0.24) }, radius: 8, score: 3 },
-  { id: 'medium', center: { x: Math.round(FIELD_SIZE * 0.74), y: Math.round(FIELD_SIZE * 0.41) }, radius: 14, score: 2 },
-  { id: 'large', center: { x: Math.round(FIELD_SIZE * 0.39), y: Math.round(FIELD_SIZE * 0.77) }, radius: 22, score: 1 },
-]
 
 const MIN_PULLBACK_PIXELS = 28
 const ABSOLUTE_MIN_PULLBACK_PIXELS = 12
@@ -41,44 +32,67 @@ const MIN_FLICK_SPEED = 0.12
 const MAX_FLICK_SPEED = 2.2
 const MIN_CONTROL_FACTOR = 0.25
 
+function zoneColor(zoneId: string): string {
+  if (zoneId.includes('blue')) return '#1C20E6'
+  if (zoneId.includes('dark-green')) return '#0A7A10'
+  if (zoneId.includes('light-green') || zoneId.includes('green')) return '#31F227'
+  if (zoneId.includes('yellow')) return '#F3F32F'
+  if (zoneId.includes('orange')) return '#F2822F'
+  if (zoneId.includes('dirt')) return '#8A520D'
+  if (zoneId.includes('circle') || zoneId.includes('red') || zoneId.includes('badge')) return '#F30D0D'
+  return '#6A6A6A'
+}
+
+function pointOnCircle(center: Point, radius: number, angleDeg: number): Point {
+  const angleRad = (angleDeg * Math.PI) / 180
+  return {
+    x: center.x + Math.cos(angleRad) * radius,
+    y: center.y + Math.sin(angleRad) * radius,
+  }
+}
+
+function sectorPath(shape: Extract<ZoneShape, { kind: 'sector' }>): string {
+  const outerStart = pointOnCircle(shape.center, shape.outerRadius, shape.startAngleDeg)
+  const outerEnd = pointOnCircle(shape.center, shape.outerRadius, shape.endAngleDeg)
+  const innerEnd = pointOnCircle(shape.center, shape.innerRadius, shape.endAngleDeg)
+  const innerStart = pointOnCircle(shape.center, shape.innerRadius, shape.startAngleDeg)
+
+  const delta = ((shape.endAngleDeg - shape.startAngleDeg + 360) % 360)
+  const largeArcFlag = delta > 180 ? 1 : 0
+
+  if (shape.innerRadius <= 0) {
+    return [
+      `M ${shape.center.x} ${shape.center.y}`,
+      `L ${outerStart.x} ${outerStart.y}`,
+      `A ${shape.outerRadius} ${shape.outerRadius} 0 ${largeArcFlag} 1 ${outerEnd.x} ${outerEnd.y}`,
+      'Z',
+    ].join(' ')
+  }
+
+  return [
+    `M ${outerStart.x} ${outerStart.y}`,
+    `A ${shape.outerRadius} ${shape.outerRadius} 0 ${largeArcFlag} 1 ${outerEnd.x} ${outerEnd.y}`,
+    `L ${innerEnd.x} ${innerEnd.y}`,
+    `A ${shape.innerRadius} ${shape.innerRadius} 0 ${largeArcFlag} 0 ${innerStart.x} ${innerStart.y}`,
+    'Z',
+  ].join(' ')
+}
+
+function polygonPath(points: Point[]): string {
+  if (points.length === 0) return ''
+  const [first, ...rest] = points
+  const segments = rest.map((p) => `L ${p.x} ${p.y}`).join(' ')
+  return `M ${first.x} ${first.y} ${segments} Z`
+}
+
+function zonePath(shape: ZoneShape): string {
+  if (shape.kind === 'sector') return sectorPath(shape)
+  if (shape.kind === 'polygon') return polygonPath(shape.points)
+  return ''
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
-}
-
-function resolveHit(impact: Point): { score: number; target: ThrowResult['target'] } {
-  let winner: TargetDot | null = null
-  let bestRatio = Number.POSITIVE_INFINITY
-
-  for (const target of TARGETS) {
-    const distance = Math.hypot(impact.x - target.center.x, impact.y - target.center.y)
-    const ratio = distance / (target.radius + HIT_BUFFER)
-
-    if (ratio <= 1 && ratio < bestRatio) {
-      bestRatio = ratio
-      winner = target
-    }
-  }
-
-  if (!winner) {
-    return { score: 0, target: 'miss' }
-  }
-
-  return { score: winner.score, target: winner.id }
-}
-
-function nearestTargetId(impact: Point): 'small' | 'medium' | 'large' {
-  let nearest: TargetDot = TARGETS[0]
-  let nearestDistance = Number.POSITIVE_INFINITY
-
-  for (const target of TARGETS) {
-    const distance = Math.hypot(impact.x - target.center.x, impact.y - target.center.y)
-    if (distance < nearestDistance) {
-      nearestDistance = distance
-      nearest = target
-    }
-  }
-
-  return nearest.id
 }
 
 function DartDemoPage() {
@@ -92,6 +106,13 @@ function DartDemoPage() {
   const [throws, setThrows] = useState<ThrowResult[]>([])
   const [pullQualityLabel, setPullQualityLabel] = useState('')
   const gesturePathRef = useRef<GesturePoint[]>([])
+
+  const orderedZones = useMemo(
+    () => [...BASEBALL_ZONES].sort((a, b) => a.priority - b.priority),
+    [],
+  )
+
+  const shownZones = orderedZones
 
   const totalScore = useMemo(() => throws.reduce((sum, result) => sum + result.score, 0), [throws])
 
@@ -244,24 +265,26 @@ function DartDemoPage() {
       y: clamp(primaryAim.y - speedLift - angleLift + gravityDrop + jitterY, 0, FIELD_SIZE),
     }
 
-    const scored = resolveHit(impact)
-    const nearest = nearestTargetId(impact)
+    const hit = resolveBaseballZoneHit(impact)
+    const score = hit.zone?.score ?? 0
+    const target = hit.zone?.id ?? 'miss'
+    const nearest = hit.nearest.id
     throwSerialRef.current += 1
 
     const result: ThrowResult = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       serial: throwSerialRef.current,
-      score: scored.score,
-      target: scored.target,
+      score,
+      target,
       nearest,
       impact,
     }
 
     setThrows((prev) => [result, ...prev].slice(0, 12))
     setStatus(
-      scored.score > 0
-        ? `Hit ${scored.target.toUpperCase()} target: +${scored.score} points`
-        : `Missed all targets. Closest to ${nearest.toUpperCase()}.`,
+      score > 0
+        ? `Hit ${target}: +${score} points`
+        : `Missed all scoring zones. Closest to ${nearest}.`,
     )
 
     const qualityText =
@@ -400,10 +423,44 @@ function DartDemoPage() {
           >
             <img
               className="target-field-image"
-              src={baseballFieldTarget}
-              alt="Baseball field target"
+              src={baseballFieldReference}
+              alt="Baseball field reference"
               draggable={false}
             />
+
+            <svg
+              className="zone-overlay"
+              viewBox={`0 0 ${FIELD_SIZE} ${FIELD_SIZE}`}
+              aria-label="Hit zone overlay"
+            >
+              {shownZones.map((zone: BaseballZone) => {
+                if (zone.shape.kind === 'circle') {
+                  return (
+                    <circle
+                      key={zone.id}
+                      className="zone-overlay-shape"
+                      cx={zone.shape.center.x}
+                      cy={zone.shape.center.y}
+                      r={zone.shape.radius}
+                      fill={zoneColor(zone.id)}
+                      stroke={zoneColor(zone.id)}
+                      strokeWidth={1.6}
+                    />
+                  )
+                }
+
+                return (
+                  <path
+                    key={zone.id}
+                    className="zone-overlay-shape"
+                    d={zonePath(zone.shape)}
+                    fill={zoneColor(zone.id)}
+                    stroke={zoneColor(zone.id)}
+                    strokeWidth={1.6}
+                  />
+                )
+              })}
+            </svg>
 
             {primaryAim ? (
               <div
@@ -439,6 +496,10 @@ function DartDemoPage() {
             ))}
           </div>
         </div>
+
+        <p className="saved-data">
+          Zone overlay: showing all {shownZones.length} zones. Hover a zone to highlight it.
+        </p>
 
         <p className="status-text">{status}</p>
         {pullQualityLabel ? <p className="saved-data">{pullQualityLabel}</p> : null}
