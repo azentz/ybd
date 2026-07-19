@@ -264,6 +264,180 @@ th {
   margin-top: 10px;
 }
 
+.dart-demo-layout {
+  margin-top: 12px;
+  display: grid;
+  gap: 16px;
+  justify-items: center;
+}
+
+.target-field {
+  position: relative;
+  width: 360px;
+  height: 360px;
+  border-radius: 18px;
+  border: 2px solid #8f6d49;
+  background:
+    linear-gradient(135deg, rgba(177, 79, 18, 0.08), transparent 35%),
+    linear-gradient(320deg, rgba(44, 95, 144, 0.07), transparent 45%),
+    #f6efe0;
+  touch-action: none;
+  overflow: hidden;
+}
+
+.target-zone {
+  position: absolute;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  transform: translate(-50%, -50%);
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px dashed #b99970;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.target-zone-small {
+  min-width: 88px;
+}
+
+.target-zone-medium {
+  min-width: 104px;
+}
+
+.target-zone-large {
+  min-width: 116px;
+}
+
+.target-dot {
+  display: inline-block;
+  border-radius: 50%;
+  background: #9e3910;
+  border: 2px solid #fff3e0;
+}
+
+.target-dot-small {
+  width: 14px;
+  height: 14px;
+}
+
+.target-dot-medium {
+  width: 24px;
+  height: 24px;
+}
+
+.target-dot-large {
+  width: 36px;
+  height: 36px;
+}
+
+.target-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #5c4836;
+}
+
+.primary-aim-dot {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #256290;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 2px #eef6ff;
+}
+
+.impact-dot {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  font-size: 0.56rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.impact-dot-hit {
+  background: #8f1f15;
+  box-shadow: 0 0 0 2px #ffe8cf;
+}
+
+.impact-dot-miss {
+  background: #2f5378;
+  box-shadow: 0 0 0 2px #e3eef9;
+}
+
+.impact-dot-miss::before,
+.impact-dot-miss::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 2px;
+  background: #d9ebff;
+  border-radius: 2px;
+}
+
+.impact-dot-miss::before {
+  transform: rotate(45deg);
+}
+
+.impact-dot-miss::after {
+  transform: rotate(-45deg);
+}
+
+.impact-dot-new {
+  z-index: 4;
+  animation: impact-pop 450ms ease-out;
+}
+
+.impact-dot-old {
+  opacity: 0.74;
+}
+
+.impact-index {
+  position: absolute;
+  top: -13px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #20190f;
+  color: #fff;
+  border-radius: 10px;
+  padding: 1px 5px;
+  line-height: 1;
+  font-size: 0.55rem;
+}
+
+@keyframes impact-pop {
+  0% {
+    transform: translate(-50%, -50%) scale(0.45);
+    opacity: 0.2;
+  }
+
+  70% {
+    transform: translate(-50%, -50%) scale(1.18);
+    opacity: 1;
+  }
+
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+.throw-vector {
+  position: absolute;
+  inset: 0;
+  color: #b14f12;
+  pointer-events: none;
+}
+
+.throw-vector-field {
+  z-index: 3;
+}
+
 @media (min-width: 700px) {
   .button-row {
     grid-template-columns: 1fr 1fr;

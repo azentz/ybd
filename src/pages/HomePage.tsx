@@ -103,6 +103,18 @@ function HomePage() {
           </Link>
         </div>
       </section>
+
+      <section className="card" aria-labelledby="demo-title">
+        <h2 id="demo-title">Single Player Throw Demo</h2>
+        <p className="lead-tight">
+          Practice dart throw feel and scoring without realtime networking.
+        </p>
+        <div className="button-row route-links">
+          <Link className="button-link" to="/demo">
+            Open Dart Demo
+          </Link>
+        </div>
+      </section>
     </main>
   )
 }

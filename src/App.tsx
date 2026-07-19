@@ -1,5 +1,6 @@
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
 import GamePage from './pages/GamePage'
+import DartDemoPage from './pages/DartDemoPage'
 import HomePage from './pages/HomePage'
 import HostLobbyPage from './pages/HostLobbyPage'
 import JoinGamePage from './pages/JoinGamePage'
@@ -12,6 +13,7 @@ function App() {
         <Route path="/" element={<HomePage />} />
         <Route path="/host" element={<HostLobbyPage />} />
         <Route path="/join" element={<JoinGamePage />} />
+        <Route path="/demo" element={<DartDemoPage />} />
         <Route path="/game" element={<GamePage />} />
         <Route path="/home" element={<Navigate to="/" replace />} />
         <Route path="*" element={<NotFoundPage />} />
