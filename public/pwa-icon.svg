@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="YBD icon">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8eecf" />
+      <stop offset="1" stop-color="#eddcb3" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="84" fill="url(#bg)" />
+  <circle cx="256" cy="256" r="182" fill="#f5f0e4" stroke="#b14f12" stroke-width="22" />
+  <circle cx="256" cy="256" r="26" fill="#b14f12" />
+  <circle cx="256" cy="178" r="16" fill="#4a8700" />
+  <circle cx="178" cy="308" r="22" fill="#c3752e" />
+  <circle cx="336" cy="308" r="30" fill="#8d3d09" />
+  <path d="M126 122 L226 212" stroke="#2f2720" stroke-width="20" stroke-linecap="round" />
+  <polygon points="214,200 240,196 230,222" fill="#2f2720" />
+</svg>
