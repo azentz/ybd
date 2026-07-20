@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import baseballFieldReference from '../assets/baseball-field-reference-02.svg'
 import {
   BASEBALL_ZONES,
+  PITCHER_CENTER,
   resolveBaseballZoneHit,
   type BaseballZone,
   type Point,
@@ -21,7 +22,7 @@ type ThrowResult = {
 
 type GesturePoint = Point & { t: number }
 
-const FIELD_SIZE = 360
+const FIELD_SIZE = 1000
 
 const MIN_PULLBACK_PIXELS = 28
 const ABSOLUTE_MIN_PULLBACK_PIXELS = 12
@@ -31,6 +32,8 @@ const TRUE_FORWARD_START_PIXELS = 8
 const MIN_FLICK_SPEED = 0.12
 const MAX_FLICK_SPEED = 2.2
 const MIN_CONTROL_FACTOR = 0.25
+const TAU = Math.PI * 2
+const OUTER_ARC_BULGE = 0
 
 function zoneColor(zoneId: string): string {
   if (zoneId.includes('blue')) return '#1C20E6'
@@ -51,29 +54,131 @@ function pointOnCircle(center: Point, radius: number, angleDeg: number): Point {
   }
 }
 
-function sectorPath(shape: Extract<ZoneShape, { kind: 'sector' }>): string {
-  const outerStart = pointOnCircle(shape.center, shape.outerRadius, shape.startAngleDeg)
-  const outerEnd = pointOnCircle(shape.center, shape.outerRadius, shape.endAngleDeg)
-  const innerEnd = pointOnCircle(shape.center, shape.innerRadius, shape.endAngleDeg)
-  const innerStart = pointOnCircle(shape.center, shape.innerRadius, shape.startAngleDeg)
+function normalizeRadians(angleRad: number): number {
+  const wrapped = angleRad % TAU
+  return wrapped < 0 ? wrapped + TAU : wrapped
+}
 
-  const delta = ((shape.endAngleDeg - shape.startAngleDeg + 360) % 360)
-  const largeArcFlag = delta > 180 ? 1 : 0
+type ArcParams = {
+  startAngle: number
+  delta: number
+  startRadius: number
+  endRadius: number
+  bulgePx: number
+}
+
+type PointWithDerivative = {
+  point: Point
+  derivative: Point
+}
+
+function buildArcParams(start: Point, end: Point, clockwise: boolean, bulgePx: number): ArcParams {
+  const startAngle = normalizeRadians(Math.atan2(start.y - PITCHER_CENTER.y, start.x - PITCHER_CENTER.x))
+  const endAngle = normalizeRadians(Math.atan2(end.y - PITCHER_CENTER.y, end.x - PITCHER_CENTER.x))
+  const startRadius = Math.hypot(start.x - PITCHER_CENTER.x, start.y - PITCHER_CENTER.y)
+  const endRadius = Math.hypot(end.x - PITCHER_CENTER.x, end.y - PITCHER_CENTER.y)
+
+  let delta = normalizeRadians(endAngle - startAngle)
+  if (!clockwise && delta > 0) {
+    delta -= TAU
+  }
+
+  return {
+    startAngle,
+    delta,
+    startRadius,
+    endRadius,
+    bulgePx,
+  }
+}
+
+function evaluatePitcherArc(params: ArcParams, t: number): PointWithDerivative {
+  const theta = params.startAngle + params.delta * t
+
+  const baseRadius = params.startRadius + (params.endRadius - params.startRadius) * t
+  const bulge = Math.sin(Math.PI * t) * params.bulgePx
+  const radius = baseRadius + bulge
+
+  const drdt = params.endRadius - params.startRadius + Math.PI * Math.cos(Math.PI * t) * params.bulgePx
+
+  const cosT = Math.cos(theta)
+  const sinT = Math.sin(theta)
+
+  return {
+    point: {
+      x: PITCHER_CENTER.x + cosT * radius,
+      y: PITCHER_CENTER.y + sinT * radius,
+    },
+    derivative: {
+      x: drdt * cosT - radius * sinT * params.delta,
+      y: drdt * sinT + radius * cosT * params.delta,
+    },
+  }
+}
+
+function cubicForArcRange(params: ArcParams, t0: number, t1: number): { c1: Point; c2: Point; end: Point } {
+  const startEval = evaluatePitcherArc(params, t0)
+  const endEval = evaluatePitcherArc(params, t1)
+  const dt = t1 - t0
+
+  return {
+    c1: {
+      x: startEval.point.x + (startEval.derivative.x * dt) / 3,
+      y: startEval.point.y + (startEval.derivative.y * dt) / 3,
+    },
+    c2: {
+      x: endEval.point.x - (endEval.derivative.x * dt) / 3,
+      y: endEval.point.y - (endEval.derivative.y * dt) / 3,
+    },
+    end: endEval.point,
+  }
+}
+
+function pitcherCenteredArcToCubicCommands(start: Point, end: Point, clockwise: boolean, bulgePx: number): string[] {
+  const params = buildArcParams(start, end, clockwise, bulgePx)
+
+  const first = cubicForArcRange(params, 0, 0.5)
+  const second = cubicForArcRange(params, 0.5, 1)
+
+  // Lock exact endpoints so corners remain perfectly aligned with HOME_CENTER rays.
+  second.end = end
+
+  return [
+    `C ${first.c1.x} ${first.c1.y} ${first.c2.x} ${first.c2.y} ${first.end.x} ${first.end.y}`,
+    `C ${second.c1.x} ${second.c1.y} ${second.c2.x} ${second.c2.y} ${second.end.x} ${second.end.y}`,
+  ]
+}
+
+function sectorPath(shape: Extract<ZoneShape, { kind: 'sector' }>): string {
+  const center = shape.center
+  const outerRadius = shape.outerRadius
+  const innerRadius = shape.innerRadius
+
+  // Keep wedge corners fixed to HOME_CENTER geometry.
+  const outerStart = pointOnCircle(center, outerRadius, shape.startAngleDeg)
+  const outerEnd = pointOnCircle(center, outerRadius, shape.endAngleDeg)
+  const innerEnd = pointOnCircle(center, innerRadius, shape.endAngleDeg)
+  const innerStart = pointOnCircle(center, innerRadius, shape.startAngleDeg)
+
+  const outerArcCommands = pitcherCenteredArcToCubicCommands(outerStart, outerEnd, true, OUTER_ARC_BULGE)
 
   if (shape.innerRadius <= 0) {
     return [
-      `M ${shape.center.x} ${shape.center.y}`,
+      `M ${center.x} ${center.y}`,
       `L ${outerStart.x} ${outerStart.y}`,
-      `A ${shape.outerRadius} ${shape.outerRadius} 0 ${largeArcFlag} 1 ${outerEnd.x} ${outerEnd.y}`,
+      ...outerArcCommands,
       'Z',
     ].join(' ')
   }
 
+  const innerBulge = outerRadius > 0 ? OUTER_ARC_BULGE * (innerRadius / outerRadius) : 0
+  const innerArcCommands = pitcherCenteredArcToCubicCommands(innerEnd, innerStart, false, innerBulge)
+
   return [
     `M ${outerStart.x} ${outerStart.y}`,
-    `A ${shape.outerRadius} ${shape.outerRadius} 0 ${largeArcFlag} 1 ${outerEnd.x} ${outerEnd.y}`,
+    ...outerArcCommands,
     `L ${innerEnd.x} ${innerEnd.y}`,
-    `A ${shape.innerRadius} ${shape.innerRadius} 0 ${largeArcFlag} 0 ${innerStart.x} ${innerStart.y}`,
+    ...innerArcCommands,
     'Z',
   ].join(' ')
 }
@@ -123,8 +228,8 @@ function DartDemoPage() {
       return { x: FIELD_SIZE / 2, y: FIELD_SIZE / 2, t: performance.now() }
     }
 
-    const x = clientX - rect.left
-    const y = clientY - rect.top
+    const x = ((clientX - rect.left) / rect.width) * FIELD_SIZE
+    const y = ((clientY - rect.top) / rect.height) * FIELD_SIZE
 
     return {
       x: clampToField ? clamp(x, 0, FIELD_SIZE) : x,
@@ -465,7 +570,7 @@ function DartDemoPage() {
             {primaryAim ? (
               <div
                 className="primary-aim-dot"
-                style={{ left: `${primaryAim.x}px`, top: `${primaryAim.y}px` }}
+                style={{ left: `${(primaryAim.x / FIELD_SIZE) * 100}%`, top: `${(primaryAim.y / FIELD_SIZE) * 100}%` }}
                 aria-label="Primary aim point"
               />
             ) : null}
@@ -488,7 +593,7 @@ function DartDemoPage() {
               <div
                 key={result.id}
                 className={`impact-dot ${result.target === 'miss' ? 'impact-dot-miss' : 'impact-dot-hit'} ${index === 0 ? 'impact-dot-new' : 'impact-dot-old'}`}
-                style={{ left: `${result.impact.x}px`, top: `${result.impact.y}px` }}
+                style={{ left: `${(result.impact.x / FIELD_SIZE) * 100}%`, top: `${(result.impact.y / FIELD_SIZE) * 100}%` }}
                 aria-label={`Throw ${result.serial}: ${result.target}`}
               >
                 <span className="impact-index">{result.serial}</span>
