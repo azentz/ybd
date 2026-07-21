@@ -27,7 +27,15 @@ export type ArcTriangleShape = {
   sideRadii?: [number, number, number]
 }
 
-export type ZoneShape = SectorShape | CircleShape | PolygonShape | ArcTriangleShape
+export type CircleLensShape = {
+  kind: 'circle-lens'
+  primaryCenter: Point
+  primaryRadius: number
+  secondaryCenter: Point
+  secondaryRadius: number
+}
+
+export type ZoneShape = SectorShape | CircleShape | PolygonShape | ArcTriangleShape | CircleLensShape
 
 export type BaseballZone = {
   id: string
@@ -171,6 +179,10 @@ const RIGHT_BADGE = buildInsetBadge(
   RIGHT_BADGE_YELLOW_RADII,
   BADGE_INSET_SCALE,
 )
+
+const FIRST_BASE_RED_CENTER: Point = { x: 665, y: 625 }
+const FIRST_BASE_RED_RADIUS = 50
+const FIRST_BASE_GRAY_PITCHER_RADIUS = 166
 
 export const BASEBALL_ZONES: BaseballZone[] = [
   {
@@ -444,6 +456,28 @@ export const BASEBALL_ZONES: BaseballZone[] = [
   },
 
   {
+    id: 'first-base-circle-red',
+    label: 'First base circle red',
+    score: 3,
+    priority: 95,
+    shape: { kind: 'circle', center: FIRST_BASE_RED_CENTER, radius: FIRST_BASE_RED_RADIUS },
+  },
+
+  {
+    id: 'first-base-circle-gray',
+    label: 'First base circle gray',
+    score: 3,
+    priority: 96,
+    shape: {
+      kind: 'circle-lens',
+      primaryCenter: FIRST_BASE_RED_CENTER,
+      primaryRadius: FIRST_BASE_RED_RADIUS,
+      secondaryCenter: PITCHER_CENTER,
+      secondaryRadius: FIRST_BASE_GRAY_PITCHER_RADIUS,
+    },
+  },
+
+  {
     id: 'outfield-light-green',
     label: 'Outfield light green',
     score: 1,
@@ -558,6 +592,17 @@ export function pointInZone(point: Point, zone: BaseballZone): boolean {
   if (zone.shape.kind === 'circle') {
     return pointInCircle(point, zone.shape)
   }
+  if (zone.shape.kind === 'circle-lens') {
+    const inPrimary = Math.hypot(
+      point.x - zone.shape.primaryCenter.x,
+      point.y - zone.shape.primaryCenter.y,
+    ) <= zone.shape.primaryRadius
+    const inSecondary = Math.hypot(
+      point.x - zone.shape.secondaryCenter.x,
+      point.y - zone.shape.secondaryCenter.y,
+    ) <= zone.shape.secondaryRadius
+    return inPrimary && inSecondary
+  }
   if (zone.shape.kind === 'arc-triangle') {
     return pointInPolygon(point, { kind: 'polygon', points: zone.shape.points })
   }
@@ -567,6 +612,13 @@ export function pointInZone(point: Point, zone: BaseballZone): boolean {
 function zoneAnchor(zone: BaseballZone): Point {
   if (zone.shape.kind === 'sector' || zone.shape.kind === 'circle') {
     return zone.shape.center
+  }
+
+  if (zone.shape.kind === 'circle-lens') {
+    return {
+      x: (zone.shape.primaryCenter.x + zone.shape.secondaryCenter.x) / 2,
+      y: (zone.shape.primaryCenter.y + zone.shape.secondaryCenter.y) / 2,
+    }
   }
 
   if (zone.shape.kind === 'arc-triangle') {

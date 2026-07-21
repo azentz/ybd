@@ -41,6 +41,7 @@ function zoneColor(zoneId: string): string {
   if (zoneId.includes('light-green') || zoneId.includes('green')) return '#31F227'
   if (zoneId.includes('yellow')) return '#F3F32F'
   if (zoneId.includes('orange')) return '#F2822F'
+  if (zoneId.includes('gray') || zoneId.includes('grey')) return '#6E6E6E'
   if (zoneId.includes('dirt')) return '#8A520D'
   if (zoneId.includes('circle') || zoneId.includes('red') || zoneId.includes('badge')) return '#F30D0D'
   return '#6A6A6A'
@@ -210,10 +211,81 @@ function arcTrianglePath(shape: Extract<ZoneShape, { kind: 'arc-triangle' }>): s
   ].join(' ')
 }
 
+function arcMidpoint(center: Point, radius: number, start: Point, end: Point, sweepFlag: 0 | 1): Point {
+  const a0 = Math.atan2(start.y - center.y, start.x - center.x)
+  const a1 = Math.atan2(end.y - center.y, end.x - center.x)
+  let delta = normalizeRadians(a1 - a0)
+  if (sweepFlag === 0 && delta > 0) delta -= TAU
+  if (sweepFlag === 1 && delta < 0) delta += TAU
+  const mid = a0 + delta / 2
+  return {
+    x: center.x + Math.cos(mid) * radius,
+    y: center.y + Math.sin(mid) * radius,
+  }
+}
+
+function circleIntersections(c1: Point, r1: number, c2: Point, r2: number): [Point, Point] | null {
+  const dx = c2.x - c1.x
+  const dy = c2.y - c1.y
+  const d = Math.hypot(dx, dy)
+
+  if (d <= Number.EPSILON) return null
+  if (d > r1 + r2) return null
+  if (d < Math.abs(r1 - r2)) return null
+
+  const a = ((r1 * r1) - (r2 * r2) + (d * d)) / (2 * d)
+  const hSq = (r1 * r1) - (a * a)
+  if (hSq < 0) return null
+  const h = Math.sqrt(Math.max(0, hSq))
+
+  const xm = c1.x + (a * dx) / d
+  const ym = c1.y + (a * dy) / d
+
+  const rx = (-dy * h) / d
+  const ry = (dx * h) / d
+
+  return [
+    { x: xm + rx, y: ym + ry },
+    { x: xm - rx, y: ym - ry },
+  ]
+}
+
+function circleLensPath(shape: Extract<ZoneShape, { kind: 'circle-lens' }>): string {
+  const intersections = circleIntersections(
+    shape.primaryCenter,
+    shape.primaryRadius,
+    shape.secondaryCenter,
+    shape.secondaryRadius,
+  )
+
+  if (!intersections) {
+    return ''
+  }
+
+  const [p1, p2] = intersections
+  const primarySweep = ([0, 1] as const).find((sweep) => {
+    const mid = arcMidpoint(shape.primaryCenter, shape.primaryRadius, p1, p2, sweep)
+    return Math.hypot(mid.x - shape.secondaryCenter.x, mid.y - shape.secondaryCenter.y) <= shape.secondaryRadius
+  }) ?? 1
+
+  const secondarySweep = ([0, 1] as const).find((sweep) => {
+    const mid = arcMidpoint(shape.secondaryCenter, shape.secondaryRadius, p2, p1, sweep)
+    return Math.hypot(mid.x - shape.primaryCenter.x, mid.y - shape.primaryCenter.y) <= shape.primaryRadius
+  }) ?? 1
+
+  return [
+    `M ${p1.x} ${p1.y}`,
+    `A ${shape.primaryRadius} ${shape.primaryRadius} 0 0 ${primarySweep} ${p2.x} ${p2.y}`,
+    `A ${shape.secondaryRadius} ${shape.secondaryRadius} 0 0 ${secondarySweep} ${p1.x} ${p1.y}`,
+    'Z',
+  ].join(' ')
+}
+
 function zonePath(zone: BaseballZone): string {
   const shape = zone.shape
   if (shape.kind === 'sector') return sectorPath(shape)
   if (shape.kind === 'arc-triangle') return arcTrianglePath(shape)
+  if (shape.kind === 'circle-lens') return circleLensPath(shape)
   if (shape.kind === 'polygon') {
     return polygonPath(shape.points)
   }
