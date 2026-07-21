@@ -621,6 +621,14 @@ function normalizeAngle(deg: number): number {
   return wrapped < 0 ? wrapped + 360 : wrapped
 }
 
+function pointOnCircle(center: Point, radius: number, angleDeg: number): Point {
+  const angleRad = (angleDeg * Math.PI) / 180
+  return {
+    x: center.x + Math.cos(angleRad) * radius,
+    y: center.y + Math.sin(angleRad) * radius,
+  }
+}
+
 function isAngleInRange(angle: number, start: number, end: number): boolean {
   const a = normalizeAngle(angle)
   const s = normalizeAngle(start)
@@ -632,15 +640,39 @@ function isAngleInRange(angle: number, start: number, end: number): boolean {
 }
 
 function pointInSector(point: Point, shape: SectorShape): boolean {
-  const dx = point.x - shape.center.x
-  const dy = point.y - shape.center.y
-  const radius = Math.hypot(dx, dy)
-  if (radius < shape.innerRadius || radius > shape.outerRadius) {
+  const angleDx = point.x - shape.center.x
+  const angleDy = point.y - shape.center.y
+  const angle = normalizeAngle((Math.atan2(angleDy, angleDx) * 180) / Math.PI)
+  if (!isAngleInRange(angle, shape.startAngleDeg, shape.endAngleDeg)) {
     return false
   }
 
-  const angle = normalizeAngle((Math.atan2(dy, dx) * 180) / Math.PI)
-  return isAngleInRange(angle, shape.startAngleDeg, shape.endAngleDeg)
+  const arcCenter = shape.arcCenter ?? PITCHER_CENTER
+  const sameCenter = arcCenter.x === shape.center.x && arcCenter.y === shape.center.y
+
+  // When rendering uses pitcher-centered arcs, evaluate radial membership from that same center.
+  if (!sameCenter) {
+    const outerStart = pointOnCircle(shape.center, shape.outerRadius, shape.startAngleDeg)
+    const outerEnd = pointOnCircle(shape.center, shape.outerRadius, shape.endAngleDeg)
+    const outerArcRadius =
+      (Math.hypot(outerStart.x - arcCenter.x, outerStart.y - arcCenter.y)
+        + Math.hypot(outerEnd.x - arcCenter.x, outerEnd.y - arcCenter.y)) / 2
+
+    let innerArcRadius = 0
+    if (shape.innerRadius > 0) {
+      const innerStart = pointOnCircle(shape.center, shape.innerRadius, shape.startAngleDeg)
+      const innerEnd = pointOnCircle(shape.center, shape.innerRadius, shape.endAngleDeg)
+      innerArcRadius =
+        (Math.hypot(innerStart.x - arcCenter.x, innerStart.y - arcCenter.y)
+          + Math.hypot(innerEnd.x - arcCenter.x, innerEnd.y - arcCenter.y)) / 2
+    }
+
+    const arcDistance = Math.hypot(point.x - arcCenter.x, point.y - arcCenter.y)
+    return arcDistance >= innerArcRadius && arcDistance <= outerArcRadius
+  }
+
+  const radius = Math.hypot(angleDx, angleDy)
+  return radius >= shape.innerRadius && radius <= shape.outerRadius
 }
 
 function pointInCircle(point: Point, shape: CircleShape): boolean {
@@ -666,6 +698,57 @@ function pointInPolygon(point: Point, shape: PolygonShape): boolean {
   return inside
 }
 
+function normalizeRadians(angleRad: number): number {
+  const wrapped = angleRad % (Math.PI * 2)
+  return wrapped < 0 ? wrapped + Math.PI * 2 : wrapped
+}
+
+function sampledArcPoints(
+  start: Point,
+  end: Point,
+  radius: number,
+  segments: number,
+): Point[] {
+  const center = svgArcCenter(start, end, radius, 0, 1)
+  const a0 = Math.atan2(start.y - center.y, start.x - center.x)
+  const a1 = Math.atan2(end.y - center.y, end.x - center.x)
+
+  let delta = normalizeRadians(a1 - a0)
+  if (delta > Math.PI) {
+    delta -= Math.PI * 2
+  }
+
+  const points: Point[] = []
+  for (let i = 1; i <= segments; i += 1) {
+    const t = i / segments
+    const angle = a0 + delta * t
+    points.push({
+      x: center.x + Math.cos(angle) * radius,
+      y: center.y + Math.sin(angle) * radius,
+    })
+  }
+
+  return points
+}
+
+function pointInArcTriangle(point: Point, shape: ArcTriangleShape): boolean {
+  const [a, b, c] = shape.points
+  const sideAB = Math.hypot(b.x - a.x, b.y - a.y)
+  const sideBC = Math.hypot(c.x - b.x, c.y - b.y)
+  const sideCA = Math.hypot(a.x - c.x, a.y - c.y)
+  const defaultRadius = (sideAB + sideBC + sideCA) / 3
+  const [rAB, rBC, rCA] = shape.sideRadii ?? [defaultRadius, defaultRadius, defaultRadius]
+
+  const sampled: Point[] = [
+    a,
+    ...sampledArcPoints(a, b, rAB, 20),
+    ...sampledArcPoints(b, c, rBC, 20),
+    ...sampledArcPoints(c, a, rCA, 20),
+  ]
+
+  return pointInPolygon(point, { kind: 'polygon', points: sampled })
+}
+
 export function pointInZone(point: Point, zone: BaseballZone): boolean {
   if (zone.shape.kind === 'sector') {
     return pointInSector(point, zone.shape)
@@ -685,7 +768,7 @@ export function pointInZone(point: Point, zone: BaseballZone): boolean {
     return inPrimary && inSecondary
   }
   if (zone.shape.kind === 'arc-triangle') {
-    return pointInPolygon(point, { kind: 'polygon', points: zone.shape.points })
+    return pointInArcTriangle(point, zone.shape)
   }
   return pointInPolygon(point, zone.shape)
 }

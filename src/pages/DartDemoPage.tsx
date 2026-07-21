@@ -303,6 +303,7 @@ function DartDemoPage() {
   const [dragPoint, setDragPoint] = useState<Point | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [primaryAim, setPrimaryAim] = useState<Point | null>(null)
+  const [aimZoneLabel, setAimZoneLabel] = useState('')
   const [status, setStatus] = useState('Step 1: Click a primary aim point in the target field.')
   const [throws, setThrows] = useState<ThrowResult[]>([])
   const [pullQualityLabel, setPullQualityLabel] = useState('')
@@ -559,8 +560,11 @@ function DartDemoPage() {
   function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
     event.currentTarget.setPointerCapture(event.pointerId)
     const point = pointerToField(event.clientX, event.clientY, true)
+    const aimHit = resolveBaseballZoneHit(point)
+    const aimTarget = aimHit.zone?.id ?? `miss (${aimHit.nearest.id} nearest)`
 
     setPrimaryAim({ x: point.x, y: point.y })
+    setAimZoneLabel(`Aim zone: ${aimTarget}`)
     setStatus('Aim set. Pull back (inside or outside the field), then flick forward and release.')
     setIsDragging(true)
     gesturePathRef.current = [point]
@@ -593,6 +597,7 @@ function DartDemoPage() {
   function handleReset(): void {
     setThrows([])
     setPrimaryAim(null)
+    setAimZoneLabel('')
     gesturePathRef.current = []
     throwSerialRef.current = 0
     setPullQualityLabel('')
@@ -701,6 +706,7 @@ function DartDemoPage() {
         <p className="saved-data">
           Zone overlay: showing all {shownZones.length} zones. Hover a zone to highlight it.
         </p>
+        {aimZoneLabel ? <p className="saved-data">{aimZoneLabel}</p> : null}
 
         <p className="status-text">{status}</p>
         {pullQualityLabel ? <p className="saved-data">{pullQualityLabel}</p> : null}
