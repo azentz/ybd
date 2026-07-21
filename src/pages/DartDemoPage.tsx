@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import type { PointerEvent as ReactPointerEvent } from 'react'
+import type { DragEvent as ReactDragEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { Link } from 'react-router-dom'
 import baseballFieldReference from '../assets/baseball-field-reference-02.svg'
 import {
@@ -558,6 +558,7 @@ function DartDemoPage() {
   }
 
   function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
+    event.preventDefault()
     event.currentTarget.setPointerCapture(event.pointerId)
     const point = pointerToField(event.clientX, event.clientY, true)
     const aimHit = resolveBaseballZoneHit(point)
@@ -569,6 +570,10 @@ function DartDemoPage() {
     setIsDragging(true)
     gesturePathRef.current = [point]
     setDragPoint(point)
+  }
+
+  function handleDragStart(event: ReactDragEvent<HTMLElement>): void {
+    event.preventDefault()
   }
 
   function handlePointerMove(event: ReactPointerEvent<HTMLDivElement>): void {
@@ -624,6 +629,7 @@ function DartDemoPage() {
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerEnd}
             onPointerCancel={handlePointerEnd}
+            onDragStart={handleDragStart}
             role="application"
             aria-label="Baseball field target"
           >
@@ -632,6 +638,7 @@ function DartDemoPage() {
               src={baseballFieldReference}
               alt="Baseball field reference"
               draggable={false}
+              onDragStart={handleDragStart}
             />
 
             <svg
