@@ -3,6 +3,7 @@ export type Point = { x: number; y: number }
 export type SectorShape = {
   kind: 'sector'
   center: Point
+  arcCenter?: Point
   innerRadius: number
   outerRadius: number
   startAngleDeg: number
@@ -20,7 +21,13 @@ export type PolygonShape = {
   points: Point[]
 }
 
-export type ZoneShape = SectorShape | CircleShape | PolygonShape
+export type ArcTriangleShape = {
+  kind: 'arc-triangle'
+  points: [Point, Point, Point]
+  sideRadii?: [number, number, number]
+}
+
+export type ZoneShape = SectorShape | CircleShape | PolygonShape | ArcTriangleShape
 
 export type BaseballZone = {
   id: string
@@ -35,7 +42,132 @@ export const PITCHER_CENTER: Point = { x: 500, y: 700 }
 const FAN_START = 225
 const FAN_END = 315
 
+const YELLOW_BADGE_POINTS: [Point, Point, Point] = [
+  { x: 500, y: 400 },
+  { x: 400, y: 190 },
+  { x: 600, y: 190 },
+]
+
+const YELLOW_BADGE_RADII: [number, number, number] = [400, 400, 400]
+
+// Interpolation from yellow side edges toward the shared bottom point.
+// Using one scale factor keeps red corners on yellow edges and preserves arc proportions.
+const RED_BADGE_SCALE = 0.78
+
+function normalizeToPi(angle: number): number {
+  let value = angle
+  while (value <= -Math.PI) value += Math.PI * 2
+  while (value > Math.PI) value -= Math.PI * 2
+  return value
+}
+
+function pointOnMinorArc(start: Point, end: Point, center: Point, t: number): Point {
+  const a0 = Math.atan2(start.y - center.y, start.x - center.x)
+  const a1 = Math.atan2(end.y - center.y, end.x - center.x)
+  const delta = normalizeToPi(a1 - a0)
+  const angle = a0 + delta * t
+  const radius = Math.hypot(start.x - center.x, start.y - center.y)
+
+  return {
+    x: center.x + Math.cos(angle) * radius,
+    y: center.y + Math.sin(angle) * radius,
+  }
+}
+
+function svgArcCenter(
+  start: Point,
+  end: Point,
+  radius: number,
+  largeArcFlag: 0 | 1,
+  sweepFlag: 0 | 1,
+): Point {
+  const x1p = (start.x - end.x) / 2
+  const y1p = (start.y - end.y) / 2
+  const denom = (x1p * x1p) + (y1p * y1p)
+  const numer = Math.max(0, (radius * radius) - denom)
+  const sign = largeArcFlag === sweepFlag ? -1 : 1
+  const factor = sign * Math.sqrt(numer / Math.max(Number.EPSILON, denom))
+
+  const cxp = factor * y1p
+  const cyp = -factor * x1p
+
+  return {
+    x: cxp + (start.x + end.x) / 2,
+    y: cyp + (start.y + end.y) / 2,
+  }
+}
+
+const yellowLeftCenter = svgArcCenter(
+  YELLOW_BADGE_POINTS[0],
+  YELLOW_BADGE_POINTS[1],
+  YELLOW_BADGE_RADII[0],
+  0,
+  1,
+)
+
+const yellowRightCenter = svgArcCenter(
+  YELLOW_BADGE_POINTS[2],
+  YELLOW_BADGE_POINTS[0],
+  YELLOW_BADGE_RADII[2],
+  0,
+  1,
+)
+
+const yellowTopCenter = svgArcCenter(
+  YELLOW_BADGE_POINTS[1],
+  YELLOW_BADGE_POINTS[2],
+  YELLOW_BADGE_RADII[1],
+  0,
+  1,
+)
+
+const RED_BADGE_POINTS: [Point, Point, Point] = [
+  YELLOW_BADGE_POINTS[0],
+  pointOnMinorArc(YELLOW_BADGE_POINTS[0], YELLOW_BADGE_POINTS[1], yellowLeftCenter, RED_BADGE_SCALE),
+  pointOnMinorArc(
+    YELLOW_BADGE_POINTS[0],
+    YELLOW_BADGE_POINTS[2],
+    yellowRightCenter,
+    RED_BADGE_SCALE,
+  ),
+]
+
+const redTopRadius = Math.hypot(
+  RED_BADGE_POINTS[1].x - yellowTopCenter.x,
+  RED_BADGE_POINTS[1].y - yellowTopCenter.y,
+)
+
+const RED_BADGE_RADII: [number, number, number] = [
+  YELLOW_BADGE_RADII[0],
+  redTopRadius,
+  YELLOW_BADGE_RADII[2],
+]
+
 export const BASEBALL_ZONES: BaseballZone[] = [
+  {
+    id: 'badge-center-red',
+    label: 'Center badge red',
+    score: 5,
+    priority: 110,
+    shape: {
+      kind: 'arc-triangle',
+      points: RED_BADGE_POINTS,
+      sideRadii: RED_BADGE_RADII,
+    },
+  },
+
+  {
+    id: 'badge-center-yellow',
+    label: 'Center badge yellow',
+    score: 4,
+    priority: 100,
+    shape: {
+      kind: 'arc-triangle',
+      points: YELLOW_BADGE_POINTS,
+      sideRadii: YELLOW_BADGE_RADII,
+    },
+  },
+
   // {
   //   id: 'badge-center-yellow',
   //   label: 'Center badge yellow',
@@ -176,47 +308,46 @@ export const BASEBALL_ZONES: BaseballZone[] = [
   //     endAngleDeg: 308,
   //   },
   // },
-  // {
-  //   id: 'infield-dirt',
-  //   label: 'Infield dirt',
-  //   score: 2,
-  //   priority: 80,
-  //   shape: {
-  //     kind: 'polygon',
-  //     points: [
-  //       { x: 500, y: 550 },
-  //       { x: 589, y: 550 },
-  //       { x: 711, y: 672 },
-  //       { x: 642, y: 739 },
-  //       { x: 500, y: 594 },
-  //       { x: 358, y: 739 },
-  //       { x: 289, y: 672 },
-  //       { x: 411, y: 550 },
-  //     ],
-  //   },
-  // },
-  // {
-  //   id: 'infield-light-green',
-  //   label: 'Infield light green',
-  //   score: 2,
-  //   priority: 60,
-  //   shape: {
-  //     kind: 'polygon',
-  //     points: [
-  //       { x: 500, y: 822 },
-  //       { x: 739, y: 583 },
-  //       { x: 500, y: 344 },
-  //       { x: 261, y: 583 },
-  //     ],
-  //   },
-  // },
 
+
+
+  {
+    id: 'infield-yellow-home',
+    label: 'Infield yellow home wedge',
+    score: 2,
+    priority: 90,
+    shape: {
+      kind: 'sector',
+      center: HOME_CENTER,
+      arcCenter: HOME_CENTER,
+      innerRadius: 0,
+      outerRadius: 92,
+      startAngleDeg: FAN_START,
+      endAngleDeg: FAN_END,
+    },
+  },
+
+  {
+    id: 'infield-light-green',
+    label: 'Infield light green',
+    score: 2,
+    priority: 60,
+    shape: {
+      kind: 'polygon',
+      points: [
+        HOME_CENTER,
+        { x: 633, y: 700 },
+        { x: 500, y: 567 },
+        { x: 367, y: 700 },
+      ],
+    },
+  },
 
   {
     id: 'infield-dirt',
     label: 'Infield dirt',
     score: 2,
-    priority: 80,
+    priority: 50,
     shape: {
       kind: 'sector',
       center: HOME_CENTER,
@@ -225,6 +356,14 @@ export const BASEBALL_ZONES: BaseballZone[] = [
       startAngleDeg: FAN_START,
       endAngleDeg: FAN_END,
     },
+  },
+
+  {
+    id: 'catcher-dirt',
+    label: 'Catcher dirt',
+    score: 0,
+    priority: 45,
+    shape: { kind: 'circle', center: HOME_CENTER, radius: 92 },
   },
 
   {
@@ -342,12 +481,27 @@ export function pointInZone(point: Point, zone: BaseballZone): boolean {
   if (zone.shape.kind === 'circle') {
     return pointInCircle(point, zone.shape)
   }
+  if (zone.shape.kind === 'arc-triangle') {
+    return pointInPolygon(point, { kind: 'polygon', points: zone.shape.points })
+  }
   return pointInPolygon(point, zone.shape)
 }
 
 function zoneAnchor(zone: BaseballZone): Point {
   if (zone.shape.kind === 'sector' || zone.shape.kind === 'circle') {
     return zone.shape.center
+  }
+
+  if (zone.shape.kind === 'arc-triangle') {
+    const total = zone.shape.points.reduce(
+      (acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }),
+      { x: 0, y: 0 },
+    )
+
+    return {
+      x: total.x / zone.shape.points.length,
+      y: total.y / zone.shape.points.length,
+    }
   }
 
   const total = zone.shape.points.reduce(

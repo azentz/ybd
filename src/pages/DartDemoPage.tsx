@@ -60,6 +60,7 @@ function normalizeRadians(angleRad: number): number {
 }
 
 type ArcParams = {
+  arcCenter: Point
   startAngle: number
   delta: number
   startRadius: number
@@ -72,11 +73,11 @@ type PointWithDerivative = {
   derivative: Point
 }
 
-function buildArcParams(start: Point, end: Point, clockwise: boolean, bulgePx: number): ArcParams {
-  const startAngle = normalizeRadians(Math.atan2(start.y - PITCHER_CENTER.y, start.x - PITCHER_CENTER.x))
-  const endAngle = normalizeRadians(Math.atan2(end.y - PITCHER_CENTER.y, end.x - PITCHER_CENTER.x))
-  const startRadius = Math.hypot(start.x - PITCHER_CENTER.x, start.y - PITCHER_CENTER.y)
-  const endRadius = Math.hypot(end.x - PITCHER_CENTER.x, end.y - PITCHER_CENTER.y)
+function buildArcParams(arcCenter: Point, start: Point, end: Point, clockwise: boolean, bulgePx: number): ArcParams {
+  const startAngle = normalizeRadians(Math.atan2(start.y - arcCenter.y, start.x - arcCenter.x))
+  const endAngle = normalizeRadians(Math.atan2(end.y - arcCenter.y, end.x - arcCenter.x))
+  const startRadius = Math.hypot(start.x - arcCenter.x, start.y - arcCenter.y)
+  const endRadius = Math.hypot(end.x - arcCenter.x, end.y - arcCenter.y)
 
   let delta = normalizeRadians(endAngle - startAngle)
   if (!clockwise && delta > 0) {
@@ -84,6 +85,7 @@ function buildArcParams(start: Point, end: Point, clockwise: boolean, bulgePx: n
   }
 
   return {
+    arcCenter,
     startAngle,
     delta,
     startRadius,
@@ -106,8 +108,8 @@ function evaluatePitcherArc(params: ArcParams, t: number): PointWithDerivative {
 
   return {
     point: {
-      x: PITCHER_CENTER.x + cosT * radius,
-      y: PITCHER_CENTER.y + sinT * radius,
+      x: params.arcCenter.x + cosT * radius,
+      y: params.arcCenter.y + sinT * radius,
     },
     derivative: {
       x: drdt * cosT - radius * sinT * params.delta,
@@ -134,8 +136,8 @@ function cubicForArcRange(params: ArcParams, t0: number, t1: number): { c1: Poin
   }
 }
 
-function pitcherCenteredArcToCubicCommands(start: Point, end: Point, clockwise: boolean, bulgePx: number): string[] {
-  const params = buildArcParams(start, end, clockwise, bulgePx)
+function arcToCubicCommands(arcCenter: Point, start: Point, end: Point, clockwise: boolean, bulgePx: number): string[] {
+  const params = buildArcParams(arcCenter, start, end, clockwise, bulgePx)
 
   const first = cubicForArcRange(params, 0, 0.5)
   const second = cubicForArcRange(params, 0.5, 1)
@@ -151,6 +153,7 @@ function pitcherCenteredArcToCubicCommands(start: Point, end: Point, clockwise: 
 
 function sectorPath(shape: Extract<ZoneShape, { kind: 'sector' }>): string {
   const center = shape.center
+  const arcCenter = shape.arcCenter ?? PITCHER_CENTER
   const outerRadius = shape.outerRadius
   const innerRadius = shape.innerRadius
 
@@ -160,7 +163,7 @@ function sectorPath(shape: Extract<ZoneShape, { kind: 'sector' }>): string {
   const innerEnd = pointOnCircle(center, innerRadius, shape.endAngleDeg)
   const innerStart = pointOnCircle(center, innerRadius, shape.startAngleDeg)
 
-  const outerArcCommands = pitcherCenteredArcToCubicCommands(outerStart, outerEnd, true, OUTER_ARC_BULGE)
+  const outerArcCommands = arcToCubicCommands(arcCenter, outerStart, outerEnd, true, OUTER_ARC_BULGE)
 
   if (shape.innerRadius <= 0) {
     return [
@@ -172,7 +175,7 @@ function sectorPath(shape: Extract<ZoneShape, { kind: 'sector' }>): string {
   }
 
   const innerBulge = outerRadius > 0 ? OUTER_ARC_BULGE * (innerRadius / outerRadius) : 0
-  const innerArcCommands = pitcherCenteredArcToCubicCommands(innerEnd, innerStart, false, innerBulge)
+  const innerArcCommands = arcToCubicCommands(arcCenter, innerEnd, innerStart, false, innerBulge)
 
   return [
     `M ${outerStart.x} ${outerStart.y}`,
@@ -190,9 +193,30 @@ function polygonPath(points: Point[]): string {
   return `M ${first.x} ${first.y} ${segments} Z`
 }
 
-function zonePath(shape: ZoneShape): string {
+function arcTrianglePath(shape: Extract<ZoneShape, { kind: 'arc-triangle' }>): string {
+  const [a, b, c] = shape.points
+  const sideAB = Math.hypot(b.x - a.x, b.y - a.y)
+  const sideBC = Math.hypot(c.x - b.x, c.y - b.y)
+  const sideCA = Math.hypot(a.x - c.x, a.y - c.y)
+  const defaultRadius = (sideAB + sideBC + sideCA) / 3
+  const [rAB, rBC, rCA] = shape.sideRadii ?? [defaultRadius, defaultRadius, defaultRadius]
+
+  return [
+    `M ${a.x} ${a.y}`,
+    `A ${rAB} ${rAB} 0 0 1 ${b.x} ${b.y}`,
+    `A ${rBC} ${rBC} 0 0 1 ${c.x} ${c.y}`,
+    `A ${rCA} ${rCA} 0 0 1 ${a.x} ${a.y}`,
+    'Z',
+  ].join(' ')
+}
+
+function zonePath(zone: BaseballZone): string {
+  const shape = zone.shape
   if (shape.kind === 'sector') return sectorPath(shape)
-  if (shape.kind === 'polygon') return polygonPath(shape.points)
+  if (shape.kind === 'arc-triangle') return arcTrianglePath(shape)
+  if (shape.kind === 'polygon') {
+    return polygonPath(shape.points)
+  }
   return ''
 }
 
@@ -558,7 +582,7 @@ function DartDemoPage() {
                   <path
                     key={zone.id}
                     className="zone-overlay-shape"
-                    d={zonePath(zone.shape)}
+                    d={zonePath(zone)}
                     fill={zoneColor(zone.id)}
                     stroke={zoneColor(zone.id)}
                     strokeWidth={1.6}
