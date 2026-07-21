@@ -183,6 +183,21 @@ const RIGHT_BADGE = buildInsetBadge(
 const FIRST_BASE_RED_CENTER: Point = { x: 665, y: 625 }
 const FIRST_BASE_RED_RADIUS = 50
 const FIRST_BASE_GRAY_PITCHER_RADIUS = 166
+const SECOND_BASE_RED_CENTER: Point = { x: 572, y: 535 }
+const SECOND_BASE_RED_RADIUS = FIRST_BASE_RED_RADIUS
+const SECOND_BASE_GRAY_PITCHER_RADIUS = FIRST_BASE_GRAY_PITCHER_RADIUS
+const SHORTSTOP_RED_CENTER: Point = {
+  x: 1000 - SECOND_BASE_RED_CENTER.x,
+  y: SECOND_BASE_RED_CENTER.y,
+}
+const SHORTSTOP_RED_RADIUS = SECOND_BASE_RED_RADIUS
+const SHORTSTOP_GRAY_PITCHER_RADIUS = SECOND_BASE_GRAY_PITCHER_RADIUS
+const THIRD_BASE_RED_CENTER: Point = {
+  x: 1000 - FIRST_BASE_RED_CENTER.x,
+  y: FIRST_BASE_RED_CENTER.y,
+}
+const THIRD_BASE_RED_RADIUS = FIRST_BASE_RED_RADIUS
+const THIRD_BASE_GRAY_PITCHER_RADIUS = FIRST_BASE_GRAY_PITCHER_RADIUS
 
 export const BASEBALL_ZONES: BaseballZone[] = [
   {
@@ -474,6 +489,72 @@ export const BASEBALL_ZONES: BaseballZone[] = [
       primaryRadius: FIRST_BASE_RED_RADIUS,
       secondaryCenter: PITCHER_CENTER,
       secondaryRadius: FIRST_BASE_GRAY_PITCHER_RADIUS,
+    },
+  },
+
+  {
+    id: 'second-base-circle-red',
+    label: 'Second base circle red',
+    score: 3,
+    priority: 95,
+    shape: { kind: 'circle', center: SECOND_BASE_RED_CENTER, radius: SECOND_BASE_RED_RADIUS },
+  },
+
+  {
+    id: 'second-base-circle-gray',
+    label: 'Second base circle gray',
+    score: 3,
+    priority: 96,
+    shape: {
+      kind: 'circle-lens',
+      primaryCenter: SECOND_BASE_RED_CENTER,
+      primaryRadius: SECOND_BASE_RED_RADIUS,
+      secondaryCenter: PITCHER_CENTER,
+      secondaryRadius: SECOND_BASE_GRAY_PITCHER_RADIUS,
+    },
+  },
+
+  {
+    id: 'shortstop-circle-red',
+    label: 'Shortstop circle red',
+    score: 3,
+    priority: 95,
+    shape: { kind: 'circle', center: SHORTSTOP_RED_CENTER, radius: SHORTSTOP_RED_RADIUS },
+  },
+
+  {
+    id: 'shortstop-circle-gray',
+    label: 'Shortstop circle gray',
+    score: 3,
+    priority: 96,
+    shape: {
+      kind: 'circle-lens',
+      primaryCenter: SHORTSTOP_RED_CENTER,
+      primaryRadius: SHORTSTOP_RED_RADIUS,
+      secondaryCenter: PITCHER_CENTER,
+      secondaryRadius: SHORTSTOP_GRAY_PITCHER_RADIUS,
+    },
+  },
+
+  {
+    id: 'third-base-circle-red',
+    label: 'Third base circle red',
+    score: 3,
+    priority: 95,
+    shape: { kind: 'circle', center: THIRD_BASE_RED_CENTER, radius: THIRD_BASE_RED_RADIUS },
+  },
+
+  {
+    id: 'third-base-circle-gray',
+    label: 'Third base circle gray',
+    score: 3,
+    priority: 96,
+    shape: {
+      kind: 'circle-lens',
+      primaryCenter: THIRD_BASE_RED_CENTER,
+      primaryRadius: THIRD_BASE_RED_RADIUS,
+      secondaryCenter: PITCHER_CENTER,
+      secondaryRadius: THIRD_BASE_GRAY_PITCHER_RADIUS,
     },
   },
 
