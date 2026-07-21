@@ -42,17 +42,30 @@ export const PITCHER_CENTER: Point = { x: 500, y: 700 }
 const FAN_START = 225
 const FAN_END = 315
 
-const YELLOW_BADGE_POINTS: [Point, Point, Point] = [
+const CENTER_BADGE_YELLOW_POINTS: [Point, Point, Point] = [
   { x: 500, y: 400 },
   { x: 400, y: 190 },
   { x: 600, y: 190 },
 ]
 
-const YELLOW_BADGE_RADII: [number, number, number] = [400, 400, 400]
+const CENTER_BADGE_YELLOW_RADII: [number, number, number] = [400, 400, 400]
 
 // Interpolation from yellow side edges toward the shared bottom point.
 // Using one scale factor keeps red corners on yellow edges and preserves arc proportions.
-const RED_BADGE_SCALE = 0.78
+const BADGE_INSET_SCALE = 0.78
+const LEFT_BADGE_ROTATION_DEG = -38
+const RIGHT_BADGE_ROTATION_DEG = -LEFT_BADGE_ROTATION_DEG
+
+function rotateAround(point: Point, center: Point, angleDeg: number): Point {
+  const angle = (angleDeg * Math.PI) / 180
+  const dx = point.x - center.x
+  const dy = point.y - center.y
+
+  return {
+    x: center.x + dx * Math.cos(angle) - dy * Math.sin(angle),
+    y: center.y + dx * Math.sin(angle) + dy * Math.cos(angle),
+  }
+}
 
 function normalizeToPi(angle: number): number {
   let value = angle
@@ -97,51 +110,67 @@ function svgArcCenter(
   }
 }
 
-const yellowLeftCenter = svgArcCenter(
-  YELLOW_BADGE_POINTS[0],
-  YELLOW_BADGE_POINTS[1],
-  YELLOW_BADGE_RADII[0],
-  0,
-  1,
+function buildInsetBadge(
+  yellowPoints: [Point, Point, Point],
+  yellowRadii: [number, number, number],
+  insetScale: number,
+): { redPoints: [Point, Point, Point]; redRadii: [number, number, number] } {
+  const [a, b, c] = yellowPoints
+  const [rAB, rBC, rCA] = yellowRadii
+
+  const leftCenter = svgArcCenter(a, b, rAB, 0, 1)
+  const rightCenter = svgArcCenter(c, a, rCA, 0, 1)
+  const topCenter = svgArcCenter(b, c, rBC, 0, 1)
+
+  const redPoints: [Point, Point, Point] = [
+    a,
+    pointOnMinorArc(a, b, leftCenter, insetScale),
+    pointOnMinorArc(c, a, rightCenter, 1 - insetScale),
+  ]
+
+  const topLeftDistance = Math.hypot(redPoints[1].x - topCenter.x, redPoints[1].y - topCenter.y)
+  const topRightDistance = Math.hypot(redPoints[2].x - topCenter.x, redPoints[2].y - topCenter.y)
+  const redTopRadius = (topLeftDistance + topRightDistance) / 2
+
+  return {
+    redPoints,
+    redRadii: [rAB, redTopRadius, rCA],
+  }
+}
+
+const CENTER_BADGE = buildInsetBadge(
+  CENTER_BADGE_YELLOW_POINTS,
+  CENTER_BADGE_YELLOW_RADII,
+  BADGE_INSET_SCALE,
 )
 
-const yellowRightCenter = svgArcCenter(
-  YELLOW_BADGE_POINTS[2],
-  YELLOW_BADGE_POINTS[0],
-  YELLOW_BADGE_RADII[2],
-  0,
-  1,
-)
-
-const yellowTopCenter = svgArcCenter(
-  YELLOW_BADGE_POINTS[1],
-  YELLOW_BADGE_POINTS[2],
-  YELLOW_BADGE_RADII[1],
-  0,
-  1,
-)
-
-const RED_BADGE_POINTS: [Point, Point, Point] = [
-  YELLOW_BADGE_POINTS[0],
-  pointOnMinorArc(YELLOW_BADGE_POINTS[0], YELLOW_BADGE_POINTS[1], yellowLeftCenter, RED_BADGE_SCALE),
-  pointOnMinorArc(
-    YELLOW_BADGE_POINTS[0],
-    YELLOW_BADGE_POINTS[2],
-    yellowRightCenter,
-    RED_BADGE_SCALE,
-  ),
+const LEFT_BADGE_YELLOW_POINTS: [Point, Point, Point] = [
+  rotateAround(CENTER_BADGE_YELLOW_POINTS[0], PITCHER_CENTER, LEFT_BADGE_ROTATION_DEG),
+  rotateAround(CENTER_BADGE_YELLOW_POINTS[1], PITCHER_CENTER, LEFT_BADGE_ROTATION_DEG),
+  rotateAround(CENTER_BADGE_YELLOW_POINTS[2], PITCHER_CENTER, LEFT_BADGE_ROTATION_DEG),
 ]
 
-const redTopRadius = Math.hypot(
-  RED_BADGE_POINTS[1].x - yellowTopCenter.x,
-  RED_BADGE_POINTS[1].y - yellowTopCenter.y,
+const LEFT_BADGE_YELLOW_RADII: [number, number, number] = [400, 400, 400]
+
+const LEFT_BADGE = buildInsetBadge(
+  LEFT_BADGE_YELLOW_POINTS,
+  LEFT_BADGE_YELLOW_RADII,
+  BADGE_INSET_SCALE,
 )
 
-const RED_BADGE_RADII: [number, number, number] = [
-  YELLOW_BADGE_RADII[0],
-  redTopRadius,
-  YELLOW_BADGE_RADII[2],
+const RIGHT_BADGE_YELLOW_POINTS: [Point, Point, Point] = [
+  rotateAround(CENTER_BADGE_YELLOW_POINTS[0], PITCHER_CENTER, RIGHT_BADGE_ROTATION_DEG),
+  rotateAround(CENTER_BADGE_YELLOW_POINTS[1], PITCHER_CENTER, RIGHT_BADGE_ROTATION_DEG),
+  rotateAround(CENTER_BADGE_YELLOW_POINTS[2], PITCHER_CENTER, RIGHT_BADGE_ROTATION_DEG),
 ]
+
+const RIGHT_BADGE_YELLOW_RADII: [number, number, number] = [400, 400, 400]
+
+const RIGHT_BADGE = buildInsetBadge(
+  RIGHT_BADGE_YELLOW_POINTS,
+  RIGHT_BADGE_YELLOW_RADII,
+  BADGE_INSET_SCALE,
+)
 
 export const BASEBALL_ZONES: BaseballZone[] = [
   {
@@ -151,8 +180,8 @@ export const BASEBALL_ZONES: BaseballZone[] = [
     priority: 110,
     shape: {
       kind: 'arc-triangle',
-      points: RED_BADGE_POINTS,
-      sideRadii: RED_BADGE_RADII,
+      points: CENTER_BADGE.redPoints,
+      sideRadii: CENTER_BADGE.redRadii,
     },
   },
 
@@ -163,8 +192,56 @@ export const BASEBALL_ZONES: BaseballZone[] = [
     priority: 100,
     shape: {
       kind: 'arc-triangle',
-      points: YELLOW_BADGE_POINTS,
-      sideRadii: YELLOW_BADGE_RADII,
+      points: CENTER_BADGE_YELLOW_POINTS,
+      sideRadii: CENTER_BADGE_YELLOW_RADII,
+    },
+  },
+
+  {
+    id: 'badge-left-red',
+    label: 'Left badge red',
+    score: 5,
+    priority: 108,
+    shape: {
+      kind: 'arc-triangle',
+      points: LEFT_BADGE.redPoints,
+      sideRadii: LEFT_BADGE.redRadii,
+    },
+  },
+
+  {
+    id: 'badge-left-yellow',
+    label: 'Left badge yellow',
+    score: 4,
+    priority: 98,
+    shape: {
+      kind: 'arc-triangle',
+      points: LEFT_BADGE_YELLOW_POINTS,
+      sideRadii: LEFT_BADGE_YELLOW_RADII,
+    },
+  },
+
+  {
+    id: 'badge-right-red',
+    label: 'Right badge red',
+    score: 5,
+    priority: 106,
+    shape: {
+      kind: 'arc-triangle',
+      points: RIGHT_BADGE.redPoints,
+      sideRadii: RIGHT_BADGE.redRadii,
+    },
+  },
+
+  {
+    id: 'badge-right-yellow',
+    label: 'Right badge yellow',
+    score: 4,
+    priority: 96,
+    shape: {
+      kind: 'arc-triangle',
+      points: RIGHT_BADGE_YELLOW_POINTS,
+      sideRadii: RIGHT_BADGE_YELLOW_RADII,
     },
   },
 
