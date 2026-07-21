@@ -445,8 +445,14 @@ function DartDemoPage() {
     const normalizedSpeed = clamp((flickSpeed - MIN_FLICK_SPEED) / (MAX_FLICK_SPEED - MIN_FLICK_SPEED), 0, 1)
     const flickControlFactor = clamp(1 - flickControlPenalty * 0.35, MIN_CONTROL_FACTOR, 1)
     const effectiveSpeed = normalizedSpeed * flickControlFactor
-    const speedLift = Math.pow(effectiveSpeed, 1.3) * 220 * unlockedPower
-    const gravityDrop = Math.pow(1 - normalizedSpeed, 1.15) * 130
+    const speedLift = Math.pow(effectiveSpeed, 1.45) * 175 * unlockedPower
+    const gravityDrop = Math.pow(1 - normalizedSpeed, 1.2) * 180
+
+    // Very slow flicks should fall much lower than the aim point.
+    const lowSpeedDrop =
+      normalizedSpeed < 0.2
+        ? Math.pow((0.2 - normalizedSpeed) / 0.2, 1.8) * 220
+        : 0
 
     // Flick angle adjusts aim left/right and contributes some lift when flicking upward.
     const upwardIntent = clamp(-flickVectorY, 0, 220)
@@ -464,7 +470,7 @@ function DartDemoPage() {
     // Primary aim is chosen first; drag and flick then alter landing based on direction and speed.
     const impact = {
       x: clamp(primaryAim.x + lateralAdjust + jitterX, 0, FIELD_SIZE),
-      y: clamp(primaryAim.y - speedLift - angleLift + gravityDrop + jitterY, 0, FIELD_SIZE),
+      y: clamp(primaryAim.y - speedLift - angleLift + gravityDrop + lowSpeedDrop + jitterY, 0, FIELD_SIZE),
     }
 
     const hit = resolveBaseballZoneHit(impact)
@@ -497,7 +503,7 @@ function DartDemoPage() {
           : 'jerky'
 
     setPullQualityLabel(
-      `Pull: ${qualityText} (straight ${pullStraightness.toFixed(2)}). Flick speed: ${normalizedSpeed.toFixed(2)} (control ${flickControlFactor.toFixed(2)}, straight ${flickStraightness.toFixed(2)}). Pullback: ${Math.round(pullback)}px.`,
+      `Pull: ${qualityText} (straight ${pullStraightness.toFixed(2)}). Flick speed: raw ${flickSpeed.toFixed(2)} px/ms (norm ${normalizedSpeed.toFixed(2)}, control ${flickControlFactor.toFixed(2)}, straight ${flickStraightness.toFixed(2)}). Pullback: ${Math.round(pullback)}px.`,
     )
   }
 
