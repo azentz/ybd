@@ -515,6 +515,24 @@ th {
   min-width: 86px;
 }
 
+.field-last-throw-banner {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  pointer-events: none;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 244, 220, 0.45);
+  background: rgba(27, 19, 14, 0.82);
+  color: #fff4df;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
 .field-stats-panel {
   position: absolute;
   right: 14px;
@@ -693,6 +711,12 @@ th {
     right: 10px;
     min-width: 148px;
     padding: 7px 8px;
+  }
+
+  .field-last-throw-banner {
+    top: 8px;
+    font-size: 0.68rem;
+    padding: 5px 10px;
   }
 
   .field-stats-grid {

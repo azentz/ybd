@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent as ReactDragEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { Link } from 'react-router-dom'
 import baseballFieldReference from '../assets/baseball-field-reference-02.svg'
@@ -913,6 +913,13 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
     }
   } else if (outcome === 'sac-bunt') {
     plateAppearanceOver = true
+    if (nextOuts >= 2) {
+      nextOuts += 1
+      runsScored = 0
+      call = 'Out'
+      nextBalls = 0
+      nextStrikes = 0
+    } else {
     const hadRunners = hasAnyRunner(nextRunners)
     const resultingOuts = nextOuts + 1
     if (resultingOuts >= 3) {
@@ -930,8 +937,16 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
     }
     nextBalls = 0
     nextStrikes = 0
+    }
   } else if (outcome === 'sac-fly') {
     plateAppearanceOver = true
+    if (nextOuts >= 2) {
+      nextOuts += 1
+      runsScored = 0
+      call = 'Out'
+      nextBalls = 0
+      nextStrikes = 0
+    } else {
     const hadRunners = hasAnyRunner(nextRunners)
     const resultingOuts = nextOuts + 1
     if (resultingOuts >= 3) {
@@ -949,9 +964,13 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
     }
     nextBalls = 0
     nextStrikes = 0
+      }
   } else if (outcome === 'double-play-out') {
     plateAppearanceOver = true
-    if (hasAnyRunner(nextRunners)) {
+    if (nextOuts >= 2) {
+      nextOuts += 1
+      call = 'Out'
+    } else if (hasAnyRunner(nextRunners)) {
       nextRunners = applyDoublePlayRunners(nextRunners)
       nextOuts += 2
       call = 'Double play'
@@ -1065,6 +1084,7 @@ function DartDemoPage() {
   const throwSerialRef = useRef(0)
   const activePointerIdRef = useRef<number | null>(null)
   const clearFieldThrowsBeforeNextPitchRef = useRef(false)
+  const lastThrowBannerTimeoutRef = useRef<number | null>(null)
 
   const [dragPoint, setDragPoint] = useState<Point | null>(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -1074,6 +1094,7 @@ function DartDemoPage() {
   const [status, setStatus] = useState('Step 1: Click a primary aim point in the target field.')
   const [throws, setThrows] = useState<ThrowResult[]>([])
   const [fieldThrows, setFieldThrows] = useState<ThrowResult[]>([])
+  const [lastThrowBanner, setLastThrowBanner] = useState<string | null>(null)
   const [pullQualityLabel, setPullQualityLabel] = useState('')
   const [clickToThrowMode, setClickToThrowMode] = useState(false)
   const [gameState, setGameState] = useState<GameState>(initialGameState)
@@ -1167,6 +1188,14 @@ function DartDemoPage() {
   const onBasePct = formatThreeDecimalStat(obpValue)
   const sluggingPct = formatThreeDecimalStat(slgValue)
   const ops = formatThreeDecimalStat(obpValue + slgValue)
+
+  useEffect(() => {
+    return () => {
+      if (lastThrowBannerTimeoutRef.current !== null) {
+        window.clearTimeout(lastThrowBannerTimeoutRef.current)
+      }
+    }
+  }, [])
 
   function pointerToField(clientX: number, clientY: number, clampToField: boolean): GesturePoint {
     const rect = fieldRef.current?.getBoundingClientRect()
@@ -1284,6 +1313,16 @@ function DartDemoPage() {
     setStatus(
       `${resolution.call} Zone: ${target === 'miss' ? `miss (${nearest} nearest)` : target}. Count ${postPlayState.balls}-${postPlayState.strikes}, outs ${postPlayState.outs}, ${inningLabel(postPlayState.inning, postPlayState.half)} (${postPlayState.battingTeam.toUpperCase()} batting).`,
     )
+
+    const briefCall = resolution.call.split('. ')[0]
+    setLastThrowBanner(briefCall)
+    if (lastThrowBannerTimeoutRef.current !== null) {
+      window.clearTimeout(lastThrowBannerTimeoutRef.current)
+    }
+    lastThrowBannerTimeoutRef.current = window.setTimeout(() => {
+      setLastThrowBanner(null)
+    }, 1600)
+
     setPullQualityLabel(qualitySummary)
   }
 
@@ -1836,6 +1875,12 @@ function DartDemoPage() {
                   </div>
                 </div>
               </div>
+
+              {lastThrowBanner ? (
+                <div className="field-last-throw-banner" aria-live="polite">
+                  {lastThrowBanner}
+                </div>
+              ) : null}
 
               <div className="field-stats-panel" aria-label="Live baseball stats">
                 <div className={`field-stats-title batting-team-${gameState.battingTeam}`}>
