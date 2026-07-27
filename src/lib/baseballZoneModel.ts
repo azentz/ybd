@@ -86,11 +86,11 @@ const FAN_END = 315
 
 const CENTER_BADGE_YELLOW_POINTS: [Point, Point, Point] = [
   { x: 500, y: 400 },
-  { x: 400, y: 190 },
-  { x: 600, y: 190 },
+  { x: 400, y: 194 },
+  { x: 600, y: 194 },
 ]
 
-const CENTER_BADGE_YELLOW_RADII: [number, number, number] = [400, 400, 400]
+const CENTER_BADGE_YELLOW_RADII: [number, number, number] = [400, 300, 400]
 
 // Interpolation from yellow side edges toward the shared bottom point.
 // Using one scale factor keeps red corners on yellow edges and preserves arc proportions.
@@ -198,11 +198,9 @@ const LEFT_BADGE_YELLOW_POINTS: [Point, Point, Point] = [
   rotateAround(CENTER_BADGE_YELLOW_POINTS[2], PITCHER_CENTER, LEFT_BADGE_ROTATION_DEG),
 ]
 
-const LEFT_BADGE_YELLOW_RADII: [number, number, number] = [400, 400, 400]
-
 const LEFT_BADGE = buildInsetBadge(
   LEFT_BADGE_YELLOW_POINTS,
-  LEFT_BADGE_YELLOW_RADII,
+  CENTER_BADGE_YELLOW_RADII,
   BADGE_INSET_SCALE,
 )
 
@@ -212,11 +210,9 @@ const RIGHT_BADGE_YELLOW_POINTS: [Point, Point, Point] = [
   rotateAround(CENTER_BADGE_YELLOW_POINTS[2], PITCHER_CENTER, RIGHT_BADGE_ROTATION_DEG),
 ]
 
-const RIGHT_BADGE_YELLOW_RADII: [number, number, number] = [400, 400, 400]
-
 const RIGHT_BADGE = buildInsetBadge(
   RIGHT_BADGE_YELLOW_POINTS,
-  RIGHT_BADGE_YELLOW_RADII,
+  CENTER_BADGE_YELLOW_RADII,
   BADGE_INSET_SCALE,
 )
 
@@ -593,7 +589,7 @@ export const BASEBALL_ZONES: BaseballZone[] = [
     shape: {
       kind: 'arc-triangle',
       points: LEFT_BADGE_YELLOW_POINTS,
-      sideRadii: LEFT_BADGE_YELLOW_RADII,
+      sideRadii: CENTER_BADGE_YELLOW_RADII,
     },
   },
 
@@ -605,7 +601,7 @@ export const BASEBALL_ZONES: BaseballZone[] = [
     shape: {
       kind: 'arc-triangle',
       points: RIGHT_BADGE_YELLOW_POINTS,
-      sideRadii: RIGHT_BADGE_YELLOW_RADII,
+      sideRadii: CENTER_BADGE_YELLOW_RADII,
     },
   },
 

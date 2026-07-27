@@ -623,8 +623,19 @@ function DartDemoPage() {
     }
 
     if (flickStartIndex < 0) {
-      setStatus('After pulling back, move forward with intent, then release.')
-      return
+      // Fallback: if move events are sparse, use the release vector itself
+      // so a valid forward flick is not dropped.
+      const releaseTravelX = releasePoint.x - backPoint.x
+      const releaseTravelY = releasePoint.y - backPoint.y
+      const releaseTravelDistance = Math.hypot(releaseTravelX, releaseTravelY)
+      const releaseForwardDot = releaseTravelX * backToAimX + releaseTravelY * backToAimY
+
+      if (releaseTravelDistance >= TRUE_FORWARD_START_PIXELS && releaseForwardDot > 0) {
+        flickStartIndex = backIndex
+      } else {
+        setStatus('After pulling back, move forward with intent, then release.')
+        return
+      }
     }
 
     const flickStartPoint = path[flickStartIndex]
@@ -799,13 +810,38 @@ function DartDemoPage() {
     event.preventDefault()
   }
 
+  function appendPointerSamples(
+    event: ReactPointerEvent<HTMLDivElement>,
+    clampToField: boolean,
+  ): GesturePoint {
+    const nativeEvent = event.nativeEvent
+    const coalesced = typeof nativeEvent.getCoalescedEvents === 'function'
+      ? nativeEvent.getCoalescedEvents()
+      : []
+
+    // Desktop mouse input can be coalesced aggressively, so consume all
+    // available samples to avoid missing pullback/flick transitions.
+    if (coalesced.length > 0) {
+      let lastPoint = pointerToField(event.clientX, event.clientY, clampToField)
+      for (const sample of coalesced) {
+        const point = pointerToField(sample.clientX, sample.clientY, clampToField)
+        gesturePathRef.current.push(point)
+        lastPoint = point
+      }
+      return lastPoint
+    }
+
+    const point = pointerToField(event.clientX, event.clientY, clampToField)
+    gesturePathRef.current.push(point)
+    return point
+  }
+
   function handlePointerMove(event: ReactPointerEvent<HTMLDivElement>): void {
     if (activePointerIdRef.current !== event.pointerId) {
       return
     }
 
-    const point = pointerToField(event.clientX, event.clientY, false)
-    gesturePathRef.current.push(point)
+    const point = appendPointerSamples(event, false)
     setDragPoint(point)
   }
 
@@ -814,8 +850,7 @@ function DartDemoPage() {
       return
     }
 
-    const releasePoint = pointerToField(event.clientX, event.clientY, false)
-    gesturePathRef.current.push(releasePoint)
+    const releasePoint = appendPointerSamples(event, false)
     activePointerIdRef.current = null
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
