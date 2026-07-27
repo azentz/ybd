@@ -15,16 +15,49 @@ import {
 type ThrowResult = {
   id: string
   serial: number
-  score: number
   target: string
   nearest: string
   impact: Point
+  call: string
+  runsScored: number
+  inning: number
+  balls: number
+  strikes: number
+  outs: number
 }
 
 type BaseRunnerState = {
   first: boolean
   second: boolean
   third: boolean
+}
+
+type GameState = {
+  inning: number
+  balls: number
+  strikes: number
+  outs: number
+  inningScores: number[]
+  totalRuns: number
+  baseRunners: BaseRunnerState
+}
+
+type PlayOutcome =
+  | 'home-run'
+  | 'triple'
+  | 'double'
+  | 'single'
+  | 'ball'
+  | 'strike'
+  | 'out'
+  | 'double-play-out'
+  | 'sac-bunt'
+  | 'sac-fly'
+
+type PlayResolution = {
+  nextState: GameState
+  call: string
+  runsScored: number
 }
 
 type GesturePoint = Point & { t: number }
@@ -50,6 +83,67 @@ const GOLDEN_ARCHES_VIEWBOX_WIDTH = 272.7
 const GOLDEN_ARCHES_VIEWBOX_HEIGHT = 238.5
 const GOLDEN_ARCHES_PATH_D =
   'm195.8 17.933c23.3 0 42.2 98.3 42.2 219.7h34c0-130.7-34.3-236.5-76.3-236.5-24 0-45.2 31.7-59.2 81.5-14-49.8-35.2-81.5-59-81.5-42 0-76.2 105.7-76.2 236.4h34c0-121.4 18.7-219.6 42-219.6s42.2 90.8 42.2 202.8h33.8c0-112 19-202.8 42.3-202.8'
+
+const HOME_RUN_ZONES = new Set([
+  'outfield-blue',
+  'outfield-right-foul-pole',
+  'outfield-left-foul-pole',
+  'outfield-big-mac-land',
+])
+
+const SINGLE_ZONES = new Set([
+  'outfield-light-green',
+  'infield-dirt',
+  'infield-orange-third-line',
+  'infield-orange-first-line',
+])
+
+const DOUBLE_ZONES = new Set([
+  'outfield-ground-rule-double',
+  'outfield-green',
+])
+
+const TRIPLE_ZONES = new Set([
+  'outfield-dark-green',
+])
+
+const BALL_ZONES = new Set([
+  'catcher-dirt',
+])
+
+const SAC_BUNT_ZONES = new Set([
+  'infield-yellow-home',
+])
+
+const SAC_FLY_ZONES = new Set([
+  'badge-right-yellow',
+  'badge-left-yellow',
+  'badge-center-yellow',
+])
+
+const DOUBLE_PLAY_OUT_ZONES = new Set([
+  'pitchers-plate-gray',
+  'home-plate-gray',
+  'first-base-circle-gray',
+  'second-base-circle-gray',
+  'shortstop-circle-gray',
+  'third-base-circle-gray',
+])
+
+const OUT_ZONES = new Set([
+  'outfield-miss-out',
+  'infield-light-green',
+  'third-base-zone-white',
+  'second-base-zone-white',
+  'first-base-zone-white',
+  'first-base-circle-red',
+  'second-base-circle-red',
+  'shortstop-circle-red',
+  'third-base-circle-red',
+  'badge-right-red',
+  'badge-left-red',
+  'badge-center-red',
+])
 
 type LogoPathMark = {
   d: string
@@ -520,6 +614,265 @@ function baseRunnerGlyph(anchor: Point, label: string) {
   )
 }
 
+function emptyBases(): BaseRunnerState {
+  return { first: false, second: false, third: false }
+}
+
+function hasAnyRunner(runners: BaseRunnerState): boolean {
+  return runners.first || runners.second || runners.third
+}
+
+function classifyPlay(zoneId: string | null, onTargetField: boolean): PlayOutcome {
+  if (!zoneId) {
+    return onTargetField ? 'strike' : 'out'
+  }
+
+  if (HOME_RUN_ZONES.has(zoneId)) return 'home-run'
+  if (TRIPLE_ZONES.has(zoneId)) return 'triple'
+  if (DOUBLE_ZONES.has(zoneId)) return 'double'
+  if (SINGLE_ZONES.has(zoneId)) return 'single'
+  if (BALL_ZONES.has(zoneId)) return 'ball'
+  if (SAC_BUNT_ZONES.has(zoneId)) return 'sac-bunt'
+  if (SAC_FLY_ZONES.has(zoneId)) return 'sac-fly'
+  if (DOUBLE_PLAY_OUT_ZONES.has(zoneId)) return 'double-play-out'
+  if (OUT_ZONES.has(zoneId)) return 'out'
+
+  return 'out'
+}
+
+function advanceOnHit(runners: BaseRunnerState, bases: number): { runners: BaseRunnerState; runs: number } {
+  const occupied = [runners.first, runners.second, runners.third]
+  const next = [false, false, false]
+  let runs = 0
+
+  for (let index = 2; index >= 0; index -= 1) {
+    if (!occupied[index]) continue
+
+    const destination = index + bases
+    if (destination >= 3) {
+      runs += 1
+    } else {
+      next[destination] = true
+    }
+  }
+
+  const batterDestination = bases - 1
+  if (batterDestination >= 3) {
+    runs += 1
+  } else {
+    next[batterDestination] = true
+  }
+
+  return {
+    runners: {
+      first: next[0],
+      second: next[1],
+      third: next[2],
+    },
+    runs,
+  }
+}
+
+function advanceRunnersOnly(runners: BaseRunnerState, bases: number): { runners: BaseRunnerState; runs: number } {
+  const occupied = [runners.first, runners.second, runners.third]
+  const next = [false, false, false]
+  let runs = 0
+
+  for (let index = 2; index >= 0; index -= 1) {
+    if (!occupied[index]) continue
+
+    const destination = index + bases
+    if (destination >= 3) {
+      runs += 1
+    } else {
+      next[destination] = true
+    }
+  }
+
+  return {
+    runners: {
+      first: next[0],
+      second: next[1],
+      third: next[2],
+    },
+    runs,
+  }
+}
+
+function forceWalk(runners: BaseRunnerState): { runners: BaseRunnerState; runs: number } {
+  if (!runners.first) {
+    return { runners: { ...runners, first: true }, runs: 0 }
+  }
+
+  if (!runners.second) {
+    return {
+      runners: { first: true, second: true, third: runners.third },
+      runs: 0,
+    }
+  }
+
+  if (!runners.third) {
+    return {
+      runners: { first: true, second: true, third: true },
+      runs: 0,
+    }
+  }
+
+  return {
+    runners: { first: true, second: true, third: true },
+    runs: 1,
+  }
+}
+
+function applyDoublePlayRunners(runners: BaseRunnerState): BaseRunnerState {
+  if (runners.third) {
+    return { ...runners, third: false }
+  }
+
+  if (runners.second) {
+    return { ...runners, second: false }
+  }
+
+  if (runners.first) {
+    return { ...runners, first: false }
+  }
+
+  return runners
+}
+
+function addRunsToInning(inningScores: number[], inning: number, runs: number): number[] {
+  const next = [...inningScores]
+  while (next.length < inning) {
+    next.push(0)
+  }
+
+  next[inning - 1] = (next[inning - 1] ?? 0) + runs
+  return next
+}
+
+function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution {
+  let nextBalls = gameState.balls
+  let nextStrikes = gameState.strikes
+  let nextOuts = gameState.outs
+  let nextRunners = gameState.baseRunners
+  let runsScored = 0
+  let call = ''
+
+  if (outcome === 'single') {
+    const moved = advanceOnHit(nextRunners, 1)
+    nextRunners = moved.runners
+    runsScored = moved.runs
+    nextBalls = 0
+    nextStrikes = 0
+    call = `Single${runsScored > 0 ? `, ${runsScored} run${runsScored === 1 ? '' : 's'} scored` : ''}`
+  } else if (outcome === 'double') {
+    const moved = advanceOnHit(nextRunners, 2)
+    nextRunners = moved.runners
+    runsScored = moved.runs
+    nextBalls = 0
+    nextStrikes = 0
+    call = `Double${runsScored > 0 ? `, ${runsScored} run${runsScored === 1 ? '' : 's'} scored` : ''}`
+  } else if (outcome === 'triple') {
+    const moved = advanceOnHit(nextRunners, 3)
+    nextRunners = moved.runners
+    runsScored = moved.runs
+    nextBalls = 0
+    nextStrikes = 0
+    call = `Triple${runsScored > 0 ? `, ${runsScored} run${runsScored === 1 ? '' : 's'} scored` : ''}`
+  } else if (outcome === 'home-run') {
+    const moved = advanceOnHit(nextRunners, 4)
+    nextRunners = moved.runners
+    runsScored = moved.runs
+    nextBalls = 0
+    nextStrikes = 0
+    call = `Home run! ${runsScored} run${runsScored === 1 ? '' : 's'} scored`
+  } else if (outcome === 'ball') {
+    const balls = nextBalls + 1
+    if (balls >= 4) {
+      const walked = forceWalk(nextRunners)
+      nextRunners = walked.runners
+      runsScored = walked.runs
+      nextBalls = 0
+      nextStrikes = 0
+      call = `Ball four, walk${runsScored > 0 ? ` and ${runsScored} run scored` : ''}`
+    } else {
+      nextBalls = balls
+      call = `Ball ${nextBalls}`
+    }
+  } else if (outcome === 'strike') {
+    const strikes = nextStrikes + 1
+    if (strikes >= 3) {
+      nextOuts += 1
+      nextBalls = 0
+      nextStrikes = 0
+      call = 'Strike three, batter out'
+    } else {
+      nextStrikes = strikes
+      call = `Strike ${nextStrikes}`
+    }
+  } else if (outcome === 'sac-bunt') {
+    const moved = advanceRunnersOnly(nextRunners, 1)
+    nextRunners = moved.runners
+    runsScored = moved.runs
+    nextOuts += 1
+    nextBalls = 0
+    nextStrikes = 0
+    call = `Sacrifice bunt${runsScored > 0 ? `, ${runsScored} run scored` : ''}`
+  } else if (outcome === 'sac-fly') {
+    const moved = advanceRunnersOnly(nextRunners, 1)
+    nextRunners = moved.runners
+    runsScored = moved.runs
+    nextOuts += 1
+    nextBalls = 0
+    nextStrikes = 0
+    call = `Sacrifice fly${runsScored > 0 ? `, ${runsScored} run scored` : ''}`
+  } else if (outcome === 'double-play-out') {
+    if (hasAnyRunner(nextRunners)) {
+      nextRunners = applyDoublePlayRunners(nextRunners)
+      nextOuts += 2
+      call = 'Double play'
+    } else {
+      nextOuts += 1
+      call = 'Out'
+    }
+    nextBalls = 0
+    nextStrikes = 0
+  } else {
+    nextOuts += 1
+    nextBalls = 0
+    nextStrikes = 0
+    call = 'Out'
+  }
+
+  let nextInning = gameState.inning
+  let inningOver = false
+  if (nextOuts >= 3) {
+    inningOver = true
+    nextInning += 1
+    nextOuts = 0
+    nextRunners = emptyBases()
+  }
+
+  const inningScores = addRunsToInning(gameState.inningScores, gameState.inning, runsScored)
+  while (inningScores.length < nextInning) {
+    inningScores.push(0)
+  }
+
+  return {
+    call: inningOver ? `${call}. Inning over.` : call,
+    runsScored,
+    nextState: {
+      inning: nextInning,
+      balls: nextBalls,
+      strikes: nextStrikes,
+      outs: nextOuts,
+      inningScores,
+      totalRuns: gameState.totalRuns + runsScored,
+      baseRunners: nextRunners,
+    },
+  }
+}
+
 function DartDemoPage() {
   const fieldRef = useRef<HTMLDivElement | null>(null)
   const throwSerialRef = useRef(0)
@@ -533,10 +886,14 @@ function DartDemoPage() {
   const [status, setStatus] = useState('Step 1: Click a primary aim point in the target field.')
   const [throws, setThrows] = useState<ThrowResult[]>([])
   const [pullQualityLabel, setPullQualityLabel] = useState('')
-  const [baseRunners, setBaseRunners] = useState<BaseRunnerState>({
-    first: false,
-    second: false,
-    third: false,
+  const [gameState, setGameState] = useState<GameState>({
+    inning: 1,
+    balls: 0,
+    strikes: 0,
+    outs: 0,
+    inningScores: [0],
+    totalRuns: 0,
+    baseRunners: emptyBases(),
   })
   const gesturePathRef = useRef<GesturePoint[]>([])
 
@@ -594,8 +951,6 @@ function DartDemoPage() {
     () => (bigMacLandShape ? goldenArchesMark(bigMacLandShape) : null),
     [bigMacLandShape],
   )
-
-  const totalScore = useMemo(() => throws.reduce((sum, result) => sum + result.score, 0), [throws])
 
   const baseRunnerMarkers = useMemo(() => {
     const first = zonePoint('first-base-zone-white')
@@ -773,31 +1128,47 @@ function DartDemoPage() {
     const jitterY = (Math.random() * 2 - 1) * jitterAmount
 
     // Primary aim is chosen first; drag and flick then alter landing based on direction and speed.
+    const rawImpact = {
+      x: primaryAim.x + lateralAdjust + jitterX,
+      y: primaryAim.y - speedLift - angleLift + gravityDrop + lowSpeedDrop + jitterY,
+    }
     const impact = {
-      x: clamp(primaryAim.x + lateralAdjust + jitterX, 0, FIELD_SIZE),
-      y: clamp(primaryAim.y - speedLift - angleLift + gravityDrop + lowSpeedDrop + jitterY, 0, FIELD_SIZE),
+      x: clamp(rawImpact.x, 0, FIELD_SIZE),
+      y: clamp(rawImpact.y, 0, FIELD_SIZE),
     }
 
-    const hit = resolveBaseballZoneHit(impact, DART_RADIUS_UNITS)
-    const score = hit.zone?.score ?? 0
+    const onTargetField = rawImpact.x >= 0
+      && rawImpact.x <= FIELD_SIZE
+      && rawImpact.y >= 0
+      && rawImpact.y <= FIELD_SIZE
+
+    const hit = resolveBaseballZoneHit(rawImpact, DART_RADIUS_UNITS)
     const target = hit.zone?.id ?? 'miss'
     const nearest = hit.nearest.id
+    const outcome = classifyPlay(hit.zone?.id ?? null, onTargetField)
+    const resolution = resolvePlay(gameState, outcome)
+
+    setGameState(resolution.nextState)
+
     throwSerialRef.current += 1
 
     const result: ThrowResult = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       serial: throwSerialRef.current,
-      score,
       target,
       nearest,
       impact,
+      call: resolution.call,
+      runsScored: resolution.runsScored,
+      inning: resolution.nextState.inning,
+      balls: resolution.nextState.balls,
+      strikes: resolution.nextState.strikes,
+      outs: resolution.nextState.outs,
     }
 
     setThrows((prev) => [result, ...prev].slice(0, 12))
     setStatus(
-      score > 0
-        ? `Hit ${target}: +${score} points`
-        : `Missed all scoring zones. Closest to ${nearest}.`,
+      `${resolution.call} Zone: ${target === 'miss' ? `miss (${nearest} nearest)` : target}. Count ${resolution.nextState.balls}-${resolution.nextState.strikes}, outs ${resolution.nextState.outs}, inning ${resolution.nextState.inning}.`,
     )
 
     const qualityText =
@@ -951,14 +1322,16 @@ function DartDemoPage() {
     gesturePathRef.current = []
     throwSerialRef.current = 0
     setPullQualityLabel('')
+    setGameState({
+      inning: 1,
+      balls: 0,
+      strikes: 0,
+      outs: 0,
+      inningScores: [0],
+      totalRuns: 0,
+      baseRunners: emptyBases(),
+    })
     setStatus('Demo reset. Step 1: click a primary aim point in the target field.')
-  }
-
-  function toggleBaseRunner(base: keyof BaseRunnerState): void {
-    setBaseRunners((prev) => ({
-      ...prev,
-      [base]: !prev[base],
-    }))
   }
 
   return (
@@ -1100,13 +1473,13 @@ function DartDemoPage() {
             ) : null}
 
             <svg className="throw-vector throw-vector-field" viewBox={`0 0 ${FIELD_SIZE} ${FIELD_SIZE}`}>
-              {baseRunners.first && baseRunnerMarkers.first ? (
+              {gameState.baseRunners.first && baseRunnerMarkers.first ? (
                 baseRunnerGlyph(baseRunnerMarkers.first, 'Runner on first base')
               ) : null}
-              {baseRunners.second && baseRunnerMarkers.second ? (
+              {gameState.baseRunners.second && baseRunnerMarkers.second ? (
                 baseRunnerGlyph(baseRunnerMarkers.second, 'Runner on second base')
               ) : null}
-              {baseRunners.third && baseRunnerMarkers.third ? (
+              {gameState.baseRunners.third && baseRunnerMarkers.third ? (
                 baseRunnerGlyph(baseRunnerMarkers.third, 'Runner on third base')
               ) : null}
 
@@ -1146,32 +1519,19 @@ function DartDemoPage() {
 
         <p className="status-text">{status}</p>
         {pullQualityLabel ? <p className="saved-data">{pullQualityLabel}</p> : null}
-        <div className="runner-controls" aria-label="Base runner controls">
-          <span className="runner-controls-label">Base runners:</span>
-          <label>
-            <input
-              type="checkbox"
-              checked={baseRunners.first}
-              onChange={() => toggleBaseRunner('first')}
-            />
-            1B
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={baseRunners.second}
-              onChange={() => toggleBaseRunner('second')}
-            />
-            2B
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={baseRunners.third}
-              onChange={() => toggleBaseRunner('third')}
-            />
-            3B
-          </label>
+
+        <div className="runner-controls" aria-label="Base runner state">
+          <span className="runner-controls-label">Count:</span>
+          <span>{gameState.balls} balls</span>
+          <span>{gameState.strikes} strikes</span>
+          <span>{gameState.outs} outs</span>
+          <span>Inning {gameState.inning}</span>
+        </div>
+        <div className="runner-controls" aria-label="Base occupancy state">
+          <span className="runner-controls-label">Runners:</span>
+          <span>1B {gameState.baseRunners.first ? 'occupied' : 'empty'}</span>
+          <span>2B {gameState.baseRunners.second ? 'occupied' : 'empty'}</span>
+          <span>3B {gameState.baseRunners.third ? 'occupied' : 'empty'}</span>
         </div>
         <div className="button-row">
           <button type="button" onClick={() => setShowReference((prev) => !prev)}>
@@ -1186,7 +1546,11 @@ function DartDemoPage() {
 
       <section className="card" aria-labelledby="score-title">
         <h2 id="score-title">Score + Throw Log</h2>
-        <p className="saved-data"><strong>Total score:</strong> {totalScore}</p>
+        <p className="saved-data"><strong>Total runs:</strong> {gameState.totalRuns}</p>
+        <p className="saved-data">
+          <strong>Inning scores:</strong>{' '}
+          {gameState.inningScores.map((runs, index) => `Inning ${index + 1}: ${runs}`).join(' | ')}
+        </p>
         {throws.length === 0 ? (
           <p className="saved-data">No throws yet.</p>
         ) : (
@@ -1195,8 +1559,11 @@ function DartDemoPage() {
               <thead>
                 <tr>
                   <th>Throw</th>
-                  <th>Target</th>
-                  <th>Points</th>
+                  <th>Zone</th>
+                  <th>Call</th>
+                  <th>Runs</th>
+                  <th>Count</th>
+                  <th>Outs</th>
                 </tr>
               </thead>
               <tbody>
@@ -1204,7 +1571,10 @@ function DartDemoPage() {
                   <tr key={result.id}>
                     <td>{index + 1}</td>
                     <td>{result.target === 'miss' ? `miss (${result.nearest} nearest)` : result.target}</td>
-                    <td>{result.score}</td>
+                    <td>{result.call}</td>
+                    <td>{result.runsScored}</td>
+                    <td>{result.balls}-{result.strikes}</td>
+                    <td>{result.outs}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1215,5 +1585,4 @@ function DartDemoPage() {
     </main>
   )
 }
-
 export default DartDemoPage
