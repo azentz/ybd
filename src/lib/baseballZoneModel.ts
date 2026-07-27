@@ -260,11 +260,14 @@ const ZONE_DARK_GREEN = '#0A7A10'
 const ZONE_BLUE = '#1C20E6'
 const ZONE_GRAY = '#6E6E6E'
 const ZONE_WHITE = '#FFFFFF'
+const ZONE_TRANSPARENT = 'transparent'
 const ZONE_DIRT = '#8A520D'
 const GROUND_RULE_DOUBLE_INNER_RADIUS = 641
 const GROUND_RULE_DOUBLE_OUTER_RADIUS = 642
 const OUTFIELD_BAND_INNER_RADIUS = GROUND_RULE_DOUBLE_OUTER_RADIUS + 1
 const OUTFIELD_BAND_OUTER_RADIUS = 700
+const OUTFIELD_MISS_INNER_RADIUS = OUTFIELD_BAND_OUTER_RADIUS + 1
+const OUTFIELD_MISS_OUTER_RADIUS = 1000
 const BIG_MAC_LEFT_ANGLE = 243
 const BIG_MAC_RIGHT_ANGLE = 250
 const FOUL_POLE_ANGLE_WIDTH = 0.2
@@ -938,6 +941,20 @@ export const BASEBALL_ZONES: BaseballZone[] = [
       arcCenter: PITCHER_CENTER,
       innerArcRadius: OUTFIELD_BLUE_INNER_ARC_RADIUS,
       outerArcRadius: OUTFIELD_BLUE_OUTER_ARC_RADIUS,
+    },
+  },
+  {
+    id: 'outfield-miss-out',
+    score: 0,
+    priority: 12,
+    color: ZONE_TRANSPARENT,
+    shape: {
+      kind: 'sector',
+      center: HOME_CENTER,
+      innerRadius: OUTFIELD_MISS_INNER_RADIUS,
+      outerRadius: OUTFIELD_MISS_OUTER_RADIUS,
+      startAngleDeg: FAN_START,
+      endAngleDeg: FAN_END,
     },
   },
   {
