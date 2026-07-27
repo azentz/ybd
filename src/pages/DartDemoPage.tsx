@@ -67,6 +67,21 @@ type PlayResolution = {
   runsScored: number
   halfInningOver: boolean
   plateAppearanceOver: boolean
+  gameOver: boolean
+}
+
+type TeamStats = {
+  hits: number
+  walks: number
+  sacFlies: number
+  atBats: number
+  plateAppearances: number
+  totalBases: number
+}
+
+type GameStats = {
+  away: TeamStats
+  home: TeamStats
 }
 
 type GesturePoint = Point & { t: number }
@@ -627,6 +642,40 @@ function emptyBases(): BaseRunnerState {
   return { first: false, second: false, third: false }
 }
 
+function initialTeamStats(): TeamStats {
+  return {
+    hits: 0,
+    walks: 0,
+    sacFlies: 0,
+    atBats: 0,
+    plateAppearances: 0,
+    totalBases: 0,
+  }
+}
+
+function initialGameStats(): GameStats {
+  return {
+    away: initialTeamStats(),
+    home: initialTeamStats(),
+  }
+}
+
+function initialGameState(): GameState {
+  return {
+    inning: 1,
+    half: 'top',
+    battingTeam: 'away',
+    balls: 0,
+    strikes: 0,
+    outs: 0,
+    awayInningScores: [0],
+    homeInningScores: [0],
+    awayTotalRuns: 0,
+    homeTotalRuns: 0,
+    baseRunners: emptyBases(),
+  }
+}
+
 function hasAnyRunner(runners: BaseRunnerState): boolean {
   return runners.first || runners.second || runners.third
 }
@@ -767,6 +816,34 @@ function inningLabel(inning: number, half: 'top' | 'bottom'): string {
   return `${half === 'top' ? 'Top' : 'Bottom'} ${inning}`
 }
 
+function isHitOutcome(outcome: PlayOutcome): boolean {
+  return outcome === 'single' || outcome === 'double' || outcome === 'triple' || outcome === 'home-run'
+}
+
+function formatAverage(numerator: number, denominator: number): string {
+  if (denominator <= 0) {
+    return '.000'
+  }
+
+  const rounded = Number((numerator / denominator).toFixed(3))
+  if (rounded < 1) {
+    const thousandths = Math.round(rounded * 1000)
+    return `.${thousandths.toString().padStart(3, '0')}`
+  }
+
+  return rounded.toFixed(3)
+}
+
+function formatThreeDecimalStat(value: number): string {
+  const rounded = Number(value.toFixed(3))
+  if (rounded < 1) {
+    const thousandths = Math.round(rounded * 1000)
+    return `.${thousandths.toString().padStart(3, '0')}`
+  }
+
+  return rounded.toFixed(3)
+}
+
 function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution {
   let nextBalls = gameState.balls
   let nextStrikes = gameState.strikes
@@ -902,8 +979,37 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
   let nextHalf = gameState.half
   let nextBattingTeam = gameState.battingTeam
   let halfInningOver = false
+  let gameOver = false
+  let winner: 'away' | 'home' | null = null
+
+  const awayTotalRuns = gameState.awayTotalRuns + (gameState.battingTeam === 'away' ? runsScored : 0)
+  const homeTotalRuns = gameState.homeTotalRuns + (gameState.battingTeam === 'home' ? runsScored : 0)
+
+  if (
+    gameState.half === 'bottom'
+    && gameState.inning >= 9
+    && plateAppearanceOver
+    && homeTotalRuns > awayTotalRuns
+  ) {
+    gameOver = true
+    winner = 'home'
+  }
+
   if (nextOuts >= 3) {
     halfInningOver = true
+
+    if (gameState.inning >= 9) {
+      if (gameState.half === 'top' && homeTotalRuns > awayTotalRuns) {
+        gameOver = true
+        winner = 'home'
+      }
+
+      if (gameState.half === 'bottom' && awayTotalRuns > homeTotalRuns) {
+        gameOver = true
+        winner = 'away'
+      }
+    }
+
     if (gameState.battingTeam === 'away') {
       nextHalf = 'bottom'
       nextBattingTeam = 'home'
@@ -931,10 +1037,13 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
   }
 
   return {
-    call: halfInningOver ? `${call}. ${gameState.battingTeam === 'away' ? 'Top' : 'Bottom'} half over.` : call,
+    call: gameOver && winner
+      ? `${call}. ${winner.toUpperCase()} wins (AWAY ${awayTotalRuns}, HOME ${homeTotalRuns}). Resetting for a new game.`
+      : (halfInningOver ? `${call}. ${gameState.battingTeam === 'away' ? 'Top' : 'Bottom'} half over.` : call),
     runsScored,
     halfInningOver,
     plateAppearanceOver,
+    gameOver,
     nextState: {
       inning: nextInning,
       half: nextHalf,
@@ -944,8 +1053,8 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
       outs: nextOuts,
       awayInningScores,
       homeInningScores,
-      awayTotalRuns: gameState.awayTotalRuns + (gameState.battingTeam === 'away' ? runsScored : 0),
-      homeTotalRuns: gameState.homeTotalRuns + (gameState.battingTeam === 'home' ? runsScored : 0),
+      awayTotalRuns,
+      homeTotalRuns,
       baseRunners: nextRunners,
     },
   }
@@ -967,19 +1076,8 @@ function DartDemoPage() {
   const [fieldThrows, setFieldThrows] = useState<ThrowResult[]>([])
   const [pullQualityLabel, setPullQualityLabel] = useState('')
   const [clickToThrowMode, setClickToThrowMode] = useState(false)
-  const [gameState, setGameState] = useState<GameState>({
-    inning: 1,
-    half: 'top',
-    battingTeam: 'away',
-    balls: 0,
-    strikes: 0,
-    outs: 0,
-    awayInningScores: [0],
-    homeInningScores: [0],
-    awayTotalRuns: 0,
-    homeTotalRuns: 0,
-    baseRunners: emptyBases(),
-  })
+  const [gameState, setGameState] = useState<GameState>(initialGameState)
+  const [gameStats, setGameStats] = useState<GameStats>(initialGameStats)
   const gesturePathRef = useRef<GesturePoint[]>([])
 
   const orderedZones = useMemo(
@@ -1061,6 +1159,15 @@ function DartDemoPage() {
 
   const scoreboardGridColumns = `96px repeat(${scoreboardInnings.length}, minmax(24px, 1fr)) 46px`
 
+  const battingStats = gameState.battingTeam === 'away' ? gameStats.away : gameStats.home
+  const battingAvg = formatAverage(battingStats.hits, battingStats.atBats)
+  const obpValue = (battingStats.hits + battingStats.walks)
+    / Math.max(1, battingStats.atBats + battingStats.walks + battingStats.sacFlies)
+  const slgValue = battingStats.totalBases / Math.max(1, battingStats.atBats)
+  const onBasePct = formatThreeDecimalStat(obpValue)
+  const sluggingPct = formatThreeDecimalStat(slgValue)
+  const ops = formatThreeDecimalStat(obpValue + slgValue)
+
   function pointerToField(clientX: number, clientY: number, clampToField: boolean): GesturePoint {
     const rect = fieldRef.current?.getBoundingClientRect()
 
@@ -1093,11 +1200,53 @@ function DartDemoPage() {
     const outcome = isThirdBaseTriplePlay
       ? 'triple-play-out'
       : classifyPlay(hit.zone?.id ?? null, onTargetField)
+    const hadAnyRunnerAtStart = hasAnyRunner(gameState.baseRunners)
     const battingTeam = gameState.battingTeam
     const currentInningLabel = inningLabel(gameState.inning, gameState.half)
     const resolution = resolvePlay(gameState, outcome)
+    const postPlayState = resolution.gameOver ? initialGameState() : resolution.nextState
 
-    setGameState(resolution.nextState)
+    if (resolution.gameOver) {
+      setGameState(initialGameState())
+    } else {
+      setGameState(resolution.nextState)
+    }
+
+    if (resolution.gameOver) {
+      setGameStats(initialGameStats())
+    } else {
+      setGameStats((prev) => {
+        const teamStats = battingTeam === 'away' ? prev.away : prev.home
+        const walkEndedPlateAppearance = resolution.plateAppearanceOver && outcome === 'ball'
+        const isSacrifice = (outcome === 'sac-bunt' || outcome === 'sac-fly') && hadAnyRunnerAtStart
+        const plateAppearanceIncrement = resolution.plateAppearanceOver ? 1 : 0
+        const atBatIncrement = resolution.plateAppearanceOver && !walkEndedPlateAppearance && !isSacrifice ? 1 : 0
+        const totalBasesIncrement = outcome === 'single'
+          ? 1
+          : outcome === 'double'
+            ? 2
+            : outcome === 'triple'
+              ? 3
+              : outcome === 'home-run'
+                ? 4
+                : 0
+
+        const nextTeamStats: TeamStats = {
+          ...teamStats,
+          hits: teamStats.hits + (isHitOutcome(outcome) ? 1 : 0),
+          walks: teamStats.walks + (walkEndedPlateAppearance ? 1 : 0),
+          sacFlies: teamStats.sacFlies + (resolution.plateAppearanceOver && outcome === 'sac-fly' && hadAnyRunnerAtStart ? 1 : 0),
+          plateAppearances: teamStats.plateAppearances + plateAppearanceIncrement,
+          atBats: teamStats.atBats + atBatIncrement,
+          totalBases: teamStats.totalBases + totalBasesIncrement,
+        }
+
+        return {
+          away: battingTeam === 'away' ? nextTeamStats : prev.away,
+          home: battingTeam === 'home' ? nextTeamStats : prev.home,
+        }
+      })
+    }
 
     throwSerialRef.current += 1
 
@@ -1117,16 +1266,23 @@ function DartDemoPage() {
       outs: resolution.nextState.outs,
     }
 
-    setThrows((prev) => [result, ...prev].slice(0, 12))
-    setFieldThrows((prev) => {
-      const currentBatterThrows = clearFieldThrowsBeforeNextPitchRef.current ? [] : prev
-      const next = [...currentBatterThrows, result]
+    if (resolution.gameOver) {
+      setThrows([])
+      setFieldThrows([])
+      throwSerialRef.current = 0
+      clearFieldThrowsBeforeNextPitchRef.current = false
+    } else {
+      setThrows((prev) => [result, ...prev].slice(0, 12))
+      setFieldThrows((prev) => {
+        const currentBatterThrows = clearFieldThrowsBeforeNextPitchRef.current ? [] : prev
+        const next = [...currentBatterThrows, result]
 
-      clearFieldThrowsBeforeNextPitchRef.current = resolution.halfInningOver || resolution.plateAppearanceOver
-      return next
-    })
+        clearFieldThrowsBeforeNextPitchRef.current = resolution.halfInningOver || resolution.plateAppearanceOver
+        return next
+      })
+    }
     setStatus(
-      `${resolution.call} Zone: ${target === 'miss' ? `miss (${nearest} nearest)` : target}. Count ${resolution.nextState.balls}-${resolution.nextState.strikes}, outs ${resolution.nextState.outs}, ${inningLabel(resolution.nextState.inning, resolution.nextState.half)} (${resolution.nextState.battingTeam.toUpperCase()} batting).`,
+      `${resolution.call} Zone: ${target === 'miss' ? `miss (${nearest} nearest)` : target}. Count ${postPlayState.balls}-${postPlayState.strikes}, outs ${postPlayState.outs}, ${inningLabel(postPlayState.inning, postPlayState.half)} (${postPlayState.battingTeam.toUpperCase()} batting).`,
     )
     setPullQualityLabel(qualitySummary)
   }
@@ -1450,19 +1606,8 @@ function DartDemoPage() {
     gesturePathRef.current = []
     throwSerialRef.current = 0
     setPullQualityLabel('')
-    setGameState({
-      inning: 1,
-      half: 'top',
-      battingTeam: 'away',
-      balls: 0,
-      strikes: 0,
-      outs: 0,
-      awayInningScores: [0],
-      homeInningScores: [0],
-      awayTotalRuns: 0,
-      homeTotalRuns: 0,
-      baseRunners: emptyBases(),
-    })
+    setGameState(initialGameState())
+    setGameStats(initialGameStats())
     setStatus('Demo reset. Step 1: click a primary aim point in the target field.')
   }
 
@@ -1687,6 +1832,22 @@ function DartDemoPage() {
                       />
                     ))}
                   </div>
+                </div>
+              </div>
+
+              <div className="field-stats-panel" aria-label="Live baseball stats">
+                <div className={`field-stats-title batting-team-${gameState.battingTeam}`}>
+                  {gameState.battingTeam.toUpperCase()} batting
+                </div>
+                <div className="field-stats-grid">
+                  <span>AVG</span>
+                  <strong>{battingAvg}</strong>
+                  <span>OBP</span>
+                  <strong>{onBasePct}</strong>
+                  <span>SLG</span>
+                  <strong>{sluggingPct}</strong>
+                  <span>OPS</span>
+                  <strong>{ops}</strong>
                 </div>
               </div>
             </div>
