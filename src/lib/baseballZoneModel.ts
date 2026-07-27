@@ -226,6 +226,9 @@ const SECOND_BASE_CORNER: Point = {
   y: HOME_CENTER.y - (HOME_CENTER.y - FIRST_BASE_CORNER.y) * 2,
 }
 const BASE_ZONE_SIZE = 14
+const HOME_PLATE_TOP_HALF_WIDTH = 9
+const HOME_PLATE_DEPTH = 18
+const HOME_PLATE_SHOULDER_DEPTH = 9
 
 function distanceBetween(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y)
@@ -306,6 +309,21 @@ function baseSquarePoints(
   const opposite = addScaled(aEdge, towardB, sideLength)
 
   return [corner, aEdge, opposite, bEdge]
+}
+
+function homePlatePoints(
+  tip: Point,
+  topHalfWidth: number,
+  depth: number,
+  shoulderDepth: number,
+): [Point, Point, Point, Point, Point] {
+  return [
+    { x: tip.x - topHalfWidth, y: tip.y - depth },
+    { x: tip.x + topHalfWidth, y: tip.y - depth },
+    { x: tip.x + topHalfWidth, y: tip.y - shoulderDepth },
+    tip,
+    { x: tip.x - topHalfWidth, y: tip.y - shoulderDepth },
+  ]
 }
 
 function circleFromThreePoints(a: Point, b: Point, c: Point): { center: Point; radius: number } | null {
@@ -654,6 +672,22 @@ export const BASEBALL_ZONES: BaseballZone[] = [
     shape: {
       kind: 'polygon',
       points: baseSquarePoints(THIRD_BASE_CORNER, HOME_CENTER, SECOND_BASE_CORNER, BASE_ZONE_SIZE),
+    },
+  },
+
+  {
+    id: 'home-plate-gray',
+    label: 'Home plate',
+    score: 2,
+    priority: 93,
+    shape: {
+      kind: 'polygon',
+      points: homePlatePoints(
+        HOME_CENTER,
+        HOME_PLATE_TOP_HALF_WIDTH,
+        HOME_PLATE_DEPTH,
+        HOME_PLATE_SHOULDER_DEPTH,
+      ),
     },
   },
 
