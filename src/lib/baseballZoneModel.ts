@@ -56,9 +56,9 @@ export type ZoneShape = SectorShape | CircleShape | PolygonShape | ArcTriangleSh
 
 export type BaseballZone = {
   id: string
-  label: string
   score: number
   priority: number
+  color: string
   shape: ZoneShape
 }
 
@@ -80,6 +80,7 @@ const CENTER_BADGE_YELLOW_RADII: [number, number, number] = [400, 400, 400]
 const BADGE_INSET_SCALE = 0.78
 const LEFT_BADGE_ROTATION_DEG = -38
 const RIGHT_BADGE_ROTATION_DEG = -LEFT_BADGE_ROTATION_DEG
+const TAU = Math.PI * 2
 
 function rotateAround(point: Point, center: Point, angleDeg: number): Point {
   const angle = (angleDeg * Math.PI) / 180
@@ -94,9 +95,14 @@ function rotateAround(point: Point, center: Point, angleDeg: number): Point {
 
 function normalizeToPi(angle: number): number {
   let value = angle
-  while (value <= -Math.PI) value += Math.PI * 2
-  while (value > Math.PI) value -= Math.PI * 2
+  while (value <= -Math.PI) value += TAU
+  while (value > Math.PI) value -= TAU
   return value
+}
+
+function normalizeZeroToTau(angle: number): number {
+  const wrapped = angle % TAU
+  return wrapped < 0 ? wrapped + TAU : wrapped
 }
 
 function pointOnMinorArc(start: Point, end: Point, center: Point, t: number): Point {
@@ -232,6 +238,17 @@ const HOME_PLATE_TOP_HALF_WIDTH = 9
 const HOME_PLATE_DEPTH = 18
 const HOME_PLATE_SHOULDER_DEPTH = 9
 
+const ZONE_RED = '#F30D0D'
+const ZONE_YELLOW = '#F3F32F'
+const ZONE_ORANGE = '#F2822F'
+const ZONE_LIGHT_GREEN = '#31F227'
+const ZONE_GREEN = '#1FAF1E'
+const ZONE_DARK_GREEN = '#0A7A10'
+const ZONE_BLUE = '#1C20E6'
+const ZONE_GRAY = '#6E6E6E'
+const ZONE_WHITE = '#FFFFFF'
+const ZONE_DIRT = '#8A520D'
+
 function distanceBetween(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y)
 }
@@ -363,16 +380,11 @@ function arcMidpointFromCenter(
   center: Point,
   sweepFlag: 0 | 1,
 ): Point {
-  const norm = (angle: number): number => {
-    const wrapped = angle % (Math.PI * 2)
-    return wrapped < 0 ? wrapped + Math.PI * 2 : wrapped
-  }
-
   const aStart = Math.atan2(start.y - center.y, start.x - center.x)
   const aEnd = Math.atan2(end.y - center.y, end.x - center.x)
-  let delta = norm(aEnd - aStart)
-  if (sweepFlag === 0 && delta > 0) delta -= Math.PI * 2
-  if (sweepFlag === 1 && delta < 0) delta += Math.PI * 2
+  let delta = normalizeZeroToTau(aEnd - aStart)
+  if (sweepFlag === 0 && delta > 0) delta -= TAU
+  if (sweepFlag === 1 && delta < 0) delta += TAU
 
   const midAngle = aStart + delta / 2
   const radius = Math.hypot(start.x - center.x, start.y - center.y)
@@ -442,9 +454,9 @@ export function resolveChordArcGeometry(shape: ChordArcShape): ChordArcGeometry 
 export const BASEBALL_ZONES: BaseballZone[] = [
   {
     id: 'badge-center-red',
-    label: 'Center badge red',
     score: 5,
-    priority: 110,
+    priority: 140,
+    color: ZONE_RED,
     shape: {
       kind: 'arc-triangle',
       points: CENTER_BADGE.redPoints,
@@ -453,22 +465,10 @@ export const BASEBALL_ZONES: BaseballZone[] = [
   },
 
   {
-    id: 'badge-center-yellow',
-    label: 'Center badge yellow',
-    score: 4,
-    priority: 100,
-    shape: {
-      kind: 'arc-triangle',
-      points: CENTER_BADGE_YELLOW_POINTS,
-      sideRadii: CENTER_BADGE_YELLOW_RADII,
-    },
-  },
-
-  {
     id: 'badge-left-red',
-    label: 'Left badge red',
     score: 5,
-    priority: 108,
+    priority: 140,
+    color: ZONE_RED,
     shape: {
       kind: 'arc-triangle',
       points: LEFT_BADGE.redPoints,
@@ -477,22 +477,10 @@ export const BASEBALL_ZONES: BaseballZone[] = [
   },
 
   {
-    id: 'badge-left-yellow',
-    label: 'Left badge yellow',
-    score: 4,
-    priority: 98,
-    shape: {
-      kind: 'arc-triangle',
-      points: LEFT_BADGE_YELLOW_POINTS,
-      sideRadii: LEFT_BADGE_YELLOW_RADII,
-    },
-  },
-
-  {
     id: 'badge-right-red',
-    label: 'Right badge red',
     score: 5,
-    priority: 106,
+    priority: 140,
+    color: ZONE_RED,
     shape: {
       kind: 'arc-triangle',
       points: RIGHT_BADGE.redPoints,
@@ -501,10 +489,34 @@ export const BASEBALL_ZONES: BaseballZone[] = [
   },
 
   {
-    id: 'badge-right-yellow',
-    label: 'Right badge yellow',
+    id: 'badge-center-yellow',
     score: 4,
-    priority: 96,
+    priority: 130,
+    color: ZONE_YELLOW,
+    shape: {
+      kind: 'arc-triangle',
+      points: CENTER_BADGE_YELLOW_POINTS,
+      sideRadii: CENTER_BADGE_YELLOW_RADII,
+    },
+  },
+
+  {
+    id: 'badge-left-yellow',
+    score: 4,
+    priority: 130,
+    color: ZONE_YELLOW,
+    shape: {
+      kind: 'arc-triangle',
+      points: LEFT_BADGE_YELLOW_POINTS,
+      sideRadii: LEFT_BADGE_YELLOW_RADII,
+    },
+  },
+
+  {
+    id: 'badge-right-yellow',
+    score: 4,
+    priority: 130,
+    color: ZONE_YELLOW,
     shape: {
       kind: 'arc-triangle',
       points: RIGHT_BADGE_YELLOW_POINTS,
@@ -512,187 +524,115 @@ export const BASEBALL_ZONES: BaseballZone[] = [
     },
   },
 
-  // {
-  //   id: 'badge-center-yellow',
-  //   label: 'Center badge yellow',
-  //   score: 5,
-  //   priority: 110,
-  //   shape: {
-  //     kind: 'sector',
-  //     center: HOME_CENTER,
-  //     innerRadius: 478,
-  //     outerRadius: 539,
-  //     startAngleDeg: 257,
-  //     endAngleDeg: 283,
-  //   },
-  // },
-  // {
-  //   id: 'badge-center-red',
-  //   label: 'Center badge red',
-  //   score: 4,
-  //   priority: 100,
-  //   shape: {
-  //     kind: 'sector',
-  //     center: HOME_CENTER,
-  //     innerRadius: 278,
-  //     outerRadius: 478,
-  //     startAngleDeg: 254,
-  //     endAngleDeg: 286,
-  //   },
-  // },
-  // {
-  //   id: 'badge-left-yellow',
-  //   label: 'Left badge yellow',
-  //   score: 5,
-  //   priority: 110,
-  //   shape: {
-  //     kind: 'sector',
-  //     center: HOME_CENTER,
-  //     innerRadius: 450,
-  //     outerRadius: 533,
-  //     startAngleDeg: 222,
-  //     endAngleDeg: 250,
-  //   },
-  // },
-  // {
-  //   id: 'badge-left-red',
-  //   label: 'Left badge red',
-  //   score: 4,
-  //   priority: 100,
-  //   shape: {
-  //     kind: 'sector',
-  //     center: HOME_CENTER,
-  //     innerRadius: 267,
-  //     outerRadius: 478,
-  //     startAngleDeg: 216,
-  //     endAngleDeg: 252,
-  //   },
-  // },
-  // {
-  //   id: 'badge-right-yellow',
-  //   label: 'Right badge yellow',
-  //   score: 5,
-  //   priority: 110,
-  //   shape: {
-  //     kind: 'sector',
-  //     center: HOME_CENTER,
-  //     innerRadius: 450,
-  //     outerRadius: 533,
-  //     startAngleDeg: 290,
-  //     endAngleDeg: 318,
-  //   },
-  // },
-  // {
-  //   id: 'badge-right-red',
-  //   label: 'Right badge red',
-  //   score: 4,
-  //   priority: 100,
-  //   shape: {
-  //     kind: 'sector',
-  //     center: HOME_CENTER,
-  //     innerRadius: 267,
-  //     outerRadius: 478,
-  //     startAngleDeg: 288,
-  //     endAngleDeg: 324,
-  //   },
-  // },
-  // {
-  //   id: 'infield-circle-top-left',
-  //   label: 'Infield circle top left',
-  //   score: 3,
-  //   priority: 95,
-  //   shape: { kind: 'circle', center: { x: 436, y: 542 }, radius: 50 },
-  // },
-  // {
-  //   id: 'infield-circle-top-right',
-  //   label: 'Infield circle top right',
-  //   score: 3,
-  //   priority: 95,
-  //   shape: { kind: 'circle', center: { x: 564, y: 542 }, radius: 50 },
-  // },
-  // {
-  //   id: 'infield-circle-bottom-left',
-  //   label: 'Infield circle bottom left',
-  //   score: 3,
-  //   priority: 95,
-  //   shape: { kind: 'circle', center: { x: 347, y: 622 }, radius: 50 },
-  // },
-  // {
-  //   id: 'infield-circle-bottom-right',
-  //   label: 'Infield circle bottom right',
-  //   score: 3,
-  //   priority: 95,
-  //   shape: { kind: 'circle', center: { x: 653, y: 622 }, radius: 50 },
-  // },
-  // {
-  //   id: 'infield-yellow-home',
-  //   label: 'Infield yellow home wedge',
-  //   score: 2,
-  //   priority: 90,
-  //   shape: {
-  //     kind: 'sector',
-  //     center: HOME_CENTER,
-  //     innerRadius: 0,
-  //     outerRadius: 128,
-  //     startAngleDeg: 235,
-  //     endAngleDeg: 305,
-  //   },
-  // },
-  // {
-  //   id: 'infield-orange-home',
-  //   label: 'Infield orange home wedge',
-  //   score: 2,
-  //   priority: 85,
-  //   shape: {
-  //     kind: 'sector',
-  //     center: HOME_CENTER,
-  //     innerRadius: 128,
-  //     outerRadius: 189,
-  //     startAngleDeg: 232,
-  //     endAngleDeg: 308,
-  //   },
-  // },
-
-
-
   {
-    id: 'first-base-zone-white',
-    label: 'First base zone',
-    score: 2,
-    priority: 92,
+    id: 'first-base-circle-gray',
+    score: 3,
+    priority: 120,
+    color: ZONE_GRAY,
     shape: {
-      kind: 'polygon',
-      points: baseSquarePoints(FIRST_BASE_CORNER, HOME_CENTER, SECOND_BASE_CORNER, BASE_ZONE_SIZE),
+      kind: 'circle-lens',
+      primaryCenter: FIRST_BASE_RED_CENTER,
+      primaryRadius: FIRST_BASE_RED_RADIUS,
+      secondaryCenter: PITCHER_CENTER,
+      secondaryRadius: FIRST_BASE_GRAY_PITCHER_RADIUS,
     },
   },
 
   {
-    id: 'second-base-zone-white',
-    label: 'Second base zone',
-    score: 2,
-    priority: 92,
+    id: 'second-base-circle-gray',
+    score: 3,
+    priority: 120,
+    color: ZONE_GRAY,
     shape: {
-      kind: 'polygon',
-      points: baseSquarePoints(SECOND_BASE_CORNER, FIRST_BASE_CORNER, THIRD_BASE_CORNER, BASE_ZONE_SIZE),
+      kind: 'circle-lens',
+      primaryCenter: SECOND_BASE_RED_CENTER,
+      primaryRadius: SECOND_BASE_RED_RADIUS,
+      secondaryCenter: PITCHER_CENTER,
+      secondaryRadius: SECOND_BASE_GRAY_PITCHER_RADIUS,
     },
   },
 
   {
-    id: 'third-base-zone-white',
-    label: 'Third base zone',
-    score: 2,
-    priority: 92,
+    id: 'shortstop-circle-gray',
+    score: 3,
+    priority: 120,
+    color: ZONE_GRAY,
     shape: {
-      kind: 'polygon',
-      points: baseSquarePoints(THIRD_BASE_CORNER, HOME_CENTER, SECOND_BASE_CORNER, BASE_ZONE_SIZE),
+      kind: 'circle-lens',
+      primaryCenter: SHORTSTOP_RED_CENTER,
+      primaryRadius: SHORTSTOP_RED_RADIUS,
+      secondaryCenter: PITCHER_CENTER,
+      secondaryRadius: SHORTSTOP_GRAY_PITCHER_RADIUS,
+    },
+  },
+
+  {
+    id: 'third-base-circle-gray',
+    score: 3,
+    priority: 120,
+    color: ZONE_GRAY,
+    shape: {
+      kind: 'circle-lens',
+      primaryCenter: THIRD_BASE_RED_CENTER,
+      primaryRadius: THIRD_BASE_RED_RADIUS,
+      secondaryCenter: PITCHER_CENTER,
+      secondaryRadius: THIRD_BASE_GRAY_PITCHER_RADIUS,
+    },
+  },
+
+  {
+    id: 'first-base-circle-red',
+    score: 3,
+    priority: 110,
+    color: ZONE_RED,
+    shape: {
+      kind: 'circle',
+      center: FIRST_BASE_RED_CENTER,
+      radius: FIRST_BASE_RED_RADIUS,
+    },
+  },
+
+  {
+    id: 'second-base-circle-red',
+    score: 3,
+    priority: 110,
+    color: ZONE_RED,
+    shape: {
+      kind: 'circle',
+      center: SECOND_BASE_RED_CENTER,
+      radius: SECOND_BASE_RED_RADIUS,
+    },
+  },
+
+  {
+    id: 'shortstop-circle-red',
+    score: 3,
+    priority: 110,
+    color: ZONE_RED,
+    shape: {
+      kind: 'circle',
+      center: SHORTSTOP_RED_CENTER,
+      radius: SHORTSTOP_RED_RADIUS,
+    },
+  },
+
+  {
+    id: 'third-base-circle-red',
+    score: 3,
+    priority: 110,
+    color: ZONE_RED,
+    shape: {
+      kind: 'circle',
+      center: THIRD_BASE_RED_CENTER,
+      radius: THIRD_BASE_RED_RADIUS,
     },
   },
 
   {
     id: 'home-plate-gray',
-    label: 'Home plate',
     score: 2,
-    priority: 93,
+    priority: 100,
+    color: ZONE_GRAY,
     shape: {
       kind: 'polygon',
       points: homePlatePoints(
@@ -706,9 +646,9 @@ export const BASEBALL_ZONES: BaseballZone[] = [
 
   {
     id: 'pitchers-plate-gray',
-    label: "Pitcher's plate",
     score: 2,
-    priority: 93,
+    priority: 100,
+    color: ZONE_GRAY,
     shape: {
       kind: 'polygon',
       points: centeredRectanglePoints(PITCHER_CENTER, PITCHERS_PLATE_WIDTH, PITCHERS_PLATE_HEIGHT),
@@ -716,10 +656,43 @@ export const BASEBALL_ZONES: BaseballZone[] = [
   },
 
   {
-    id: 'infield-orange-first-line',
-    label: 'Infield orange first-base line arc',
+    id: 'first-base-zone-white',
     score: 2,
-    priority: 91,
+    priority: 100,
+    color: ZONE_WHITE,
+    shape: {
+      kind: 'polygon',
+      points: baseSquarePoints(FIRST_BASE_CORNER, HOME_CENTER, SECOND_BASE_CORNER, BASE_ZONE_SIZE),
+    },
+  },
+
+  {
+    id: 'second-base-zone-white',
+    score: 2,
+    priority: 100,
+    color: ZONE_WHITE,
+    shape: {
+      kind: 'polygon',
+      points: baseSquarePoints(SECOND_BASE_CORNER, FIRST_BASE_CORNER, THIRD_BASE_CORNER, BASE_ZONE_SIZE),
+    },
+  },
+
+  {
+    id: 'third-base-zone-white',
+    score: 2,
+    priority: 100,
+    color: ZONE_WHITE,
+    shape: {
+      kind: 'polygon',
+      points: baseSquarePoints(THIRD_BASE_CORNER, HOME_CENTER, SECOND_BASE_CORNER, BASE_ZONE_SIZE),
+    },
+  },
+
+  {
+    id: 'infield-orange-first-line',
+    score: 2,
+    priority: 90,
+    color: ZONE_ORANGE,
     shape: {
       kind: 'chord-arc',
       start: pointAlongLine(HOME_CENTER, FIRST_BASE_CORNER, 58),
@@ -731,9 +704,9 @@ export const BASEBALL_ZONES: BaseballZone[] = [
 
   {
     id: 'infield-orange-third-line',
-    label: 'Infield orange third-base line arc',
     score: 2,
-    priority: 91,
+    priority: 90,
+    color: ZONE_ORANGE,
     shape: {
       kind: 'chord-arc',
       start: pointAlongLine(HOME_CENTER, THIRD_BASE_CORNER, 58),
@@ -745,9 +718,9 @@ export const BASEBALL_ZONES: BaseballZone[] = [
 
   {
     id: 'infield-yellow-home',
-    label: 'Infield yellow home wedge',
     score: 2,
-    priority: 90,
+    priority: 80,
+    color: ZONE_YELLOW,
     shape: {
       kind: 'sector',
       center: HOME_CENTER,
@@ -761,188 +734,101 @@ export const BASEBALL_ZONES: BaseballZone[] = [
 
   {
     id: 'infield-light-green',
-    label: 'Infield light green',
     score: 2,
-    priority: 60,
+    priority: 70,
+    color: ZONE_LIGHT_GREEN,
     shape: {
       kind: 'polygon',
       points: [
         HOME_CENTER,
-        { x: 633, y: 700 },
-        { x: 500, y: 567 },
-        { x: 367, y: 700 },
+        FIRST_BASE_CORNER,
+        SECOND_BASE_CORNER,
+        THIRD_BASE_CORNER,
       ],
     },
   },
 
   {
-    id: 'infield-dirt',
-    label: 'Infield dirt',
-    score: 2,
-    priority: 50,
-    shape: {
-      kind: 'sector',
-      center: HOME_CENTER,
-      innerRadius: 0,
-      outerRadius: 260,
-      startAngleDeg: FAN_START,
-      endAngleDeg: FAN_END,
-    },
-  },
-
-  {
     id: 'catcher-dirt',
-    label: 'Catcher dirt',
     score: 0,
-    priority: 45,
+    priority: 60,
+    color: ZONE_DIRT,
     shape: { kind: 'circle', center: HOME_CENTER, radius: 92 },
   },
 
   {
-    id: 'first-base-circle-red',
-    label: 'First base circle red',
-    score: 3,
-    priority: 95,
-    shape: { kind: 'circle', center: FIRST_BASE_RED_CENTER, radius: FIRST_BASE_RED_RADIUS },
-  },
-
-  {
-    id: 'first-base-circle-gray',
-    label: 'First base circle gray',
-    score: 3,
-    priority: 96,
-    shape: {
-      kind: 'circle-lens',
-      primaryCenter: FIRST_BASE_RED_CENTER,
-      primaryRadius: FIRST_BASE_RED_RADIUS,
-      secondaryCenter: PITCHER_CENTER,
-      secondaryRadius: FIRST_BASE_GRAY_PITCHER_RADIUS,
-    },
-  },
-
-  {
-    id: 'second-base-circle-red',
-    label: 'Second base circle red',
-    score: 3,
-    priority: 95,
-    shape: { kind: 'circle', center: SECOND_BASE_RED_CENTER, radius: SECOND_BASE_RED_RADIUS },
-  },
-
-  {
-    id: 'second-base-circle-gray',
-    label: 'Second base circle gray',
-    score: 3,
-    priority: 96,
-    shape: {
-      kind: 'circle-lens',
-      primaryCenter: SECOND_BASE_RED_CENTER,
-      primaryRadius: SECOND_BASE_RED_RADIUS,
-      secondaryCenter: PITCHER_CENTER,
-      secondaryRadius: SECOND_BASE_GRAY_PITCHER_RADIUS,
-    },
-  },
-
-  {
-    id: 'shortstop-circle-red',
-    label: 'Shortstop circle red',
-    score: 3,
-    priority: 95,
-    shape: { kind: 'circle', center: SHORTSTOP_RED_CENTER, radius: SHORTSTOP_RED_RADIUS },
-  },
-
-  {
-    id: 'shortstop-circle-gray',
-    label: 'Shortstop circle gray',
-    score: 3,
-    priority: 96,
-    shape: {
-      kind: 'circle-lens',
-      primaryCenter: SHORTSTOP_RED_CENTER,
-      primaryRadius: SHORTSTOP_RED_RADIUS,
-      secondaryCenter: PITCHER_CENTER,
-      secondaryRadius: SHORTSTOP_GRAY_PITCHER_RADIUS,
-    },
-  },
-
-  {
-    id: 'third-base-circle-red',
-    label: 'Third base circle red',
-    score: 3,
-    priority: 95,
-    shape: { kind: 'circle', center: THIRD_BASE_RED_CENTER, radius: THIRD_BASE_RED_RADIUS },
-  },
-
-  {
-    id: 'third-base-circle-gray',
-    label: 'Third base circle gray',
-    score: 3,
-    priority: 96,
-    shape: {
-      kind: 'circle-lens',
-      primaryCenter: THIRD_BASE_RED_CENTER,
-      primaryRadius: THIRD_BASE_RED_RADIUS,
-      secondaryCenter: PITCHER_CENTER,
-      secondaryRadius: THIRD_BASE_GRAY_PITCHER_RADIUS,
-    },
-  },
-
-  {
-    id: 'outfield-light-green',
-    label: 'Outfield light green',
-    score: 1,
-    priority: 40,
+    id: 'infield-dirt',
+    score: 2,
+    priority: 50,
+    color: ZONE_DIRT,
     shape: {
       kind: 'sector',
       center: HOME_CENTER,
-      innerRadius: 261,
-      outerRadius: 485,
+      innerRadius: 0,
+      outerRadius: 262,
+      startAngleDeg: FAN_START,
+      endAngleDeg: FAN_END,
+    },
+  },
+  {
+    id: 'outfield-light-green',
+    score: 1,
+    priority: 40,
+    color: ZONE_LIGHT_GREEN,
+    shape: {
+      kind: 'sector',
+      center: HOME_CENTER,
+      innerRadius: 263,
+      outerRadius: 480,
       startAngleDeg: FAN_START,
       endAngleDeg: FAN_END,
     },
   },
   {
     id: 'outfield-green',
-    label: 'Outfield green',
     score: 1,
     priority: 30,
+    color: ZONE_GREEN,
     shape: {
       kind: 'sector',
       center: HOME_CENTER,
-      innerRadius: 486,
-      outerRadius: 603,
+      innerRadius: 481,
+      outerRadius: 610,
       startAngleDeg: FAN_START,
       endAngleDeg: FAN_END,
     },
   },
   {
     id: 'outfield-dark-green',
-    label: 'Outfield dark green',
     score: 1,
     priority: 20,
+    color: ZONE_DARK_GREEN,
     shape: {
       kind: 'sector',
       center: HOME_CENTER,
-      innerRadius: 604,
-      outerRadius: 635,
+      innerRadius: 611,
+      outerRadius: 640,
       startAngleDeg: FAN_START,
       endAngleDeg: FAN_END,
     },
   },
   {
     id: 'outfield-blue',
-    label: 'Outfield blue',
     score: 1,
     priority: 10,
+    color: ZONE_BLUE,
     shape: {
       kind: 'sector',
       center: HOME_CENTER,
-      innerRadius: 636,
-      outerRadius: 696,
+      innerRadius: 641,
+      outerRadius: 700,
       startAngleDeg: FAN_START,
       endAngleDeg: FAN_END,
     },
   },
 ]
+
+const ZONES_BY_PRIORITY_DESC = [...BASEBALL_ZONES].sort((a, b) => b.priority - a.priority)
 
 function normalizeAngle(deg: number): number {
   const wrapped = deg % 360
@@ -1008,7 +894,7 @@ function pointInSector(point: Point, shape: SectorShape): boolean {
 }
 
 function pointInCircle(point: Point, shape: CircleShape): boolean {
-  return Math.hypot(point.x - shape.center.x, point.y - shape.center.y) <= shape.radius
+  return distanceBetween(point, shape.center) <= shape.radius
 }
 
 function pointInChordArc(point: Point, shape: ChordArcShape): boolean {
@@ -1052,11 +938,6 @@ function pointInPolygon(point: Point, shape: PolygonShape): boolean {
   return inside
 }
 
-function normalizeRadians(angleRad: number): number {
-  const wrapped = angleRad % (Math.PI * 2)
-  return wrapped < 0 ? wrapped + Math.PI * 2 : wrapped
-}
-
 function sampledArcPoints(
   start: Point,
   end: Point,
@@ -1067,9 +948,9 @@ function sampledArcPoints(
   const a0 = Math.atan2(start.y - center.y, start.x - center.x)
   const a1 = Math.atan2(end.y - center.y, end.x - center.x)
 
-  let delta = normalizeRadians(a1 - a0)
+  let delta = normalizeZeroToTau(a1 - a0)
   if (delta > Math.PI) {
-    delta -= Math.PI * 2
+    delta -= TAU
   }
 
   const points: Point[] = []
@@ -1177,8 +1058,7 @@ function zoneDistance(point: Point, zone: BaseballZone): number {
 }
 
 export function resolveBaseballZoneHit(point: Point): { zone: BaseballZone | null; nearest: BaseballZone } {
-  const sorted = [...BASEBALL_ZONES].sort((a, b) => b.priority - a.priority)
-  const hit = sorted.find((zone) => pointInZone(point, zone)) ?? null
+  const hit = ZONES_BY_PRIORITY_DESC.find((zone) => pointInZone(point, zone)) ?? null
 
   let nearest = BASEBALL_ZONES[0]
   let nearestDistance = Number.POSITIVE_INFINITY

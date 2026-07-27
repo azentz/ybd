@@ -36,19 +36,6 @@ const MIN_CONTROL_FACTOR = 0.25
 const TAU = Math.PI * 2
 const OUTER_ARC_BULGE = 0
 
-function zoneColor(zoneId: string): string {
-  if (zoneId.includes('blue')) return '#1C20E6'
-  if (zoneId.includes('dark-green')) return '#0A7A10'
-  if (zoneId.includes('light-green') || zoneId.includes('green')) return '#31F227'
-  if (zoneId.includes('yellow')) return '#F3F32F'
-  if (zoneId.includes('orange')) return '#F2822F'
-  if (zoneId.includes('white')) return '#FFFFFF'
-  if (zoneId.includes('gray') || zoneId.includes('grey')) return '#6E6E6E'
-  if (zoneId.includes('dirt')) return '#8A520D'
-  if (zoneId.includes('circle') || zoneId.includes('red') || zoneId.includes('badge')) return '#F30D0D'
-  return '#6A6A6A'
-}
-
 function pointOnCircle(center: Point, radius: number, angleDeg: number): Point {
   const angleRad = (angleDeg * Math.PI) / 180
   return {
@@ -316,6 +303,7 @@ function clamp(value: number, min: number, max: number): number {
 function DartDemoPage() {
   const fieldRef = useRef<HTMLDivElement | null>(null)
   const throwSerialRef = useRef(0)
+  const activePointerIdRef = useRef<number | null>(null)
 
   const [dragPoint, setDragPoint] = useState<Point | null>(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -375,15 +363,18 @@ function DartDemoPage() {
       }
     }
 
-    // If the user pauses at max pullback, use the latest point on that plateau
-    // so the hold is not counted as part of the flick.
-    for (let i = path.length - 1; i >= backIndex; i -= 1) {
+    // If the user pauses at max pullback, keep only the contiguous plateau
+    // right after the max point so forward motion is not reclassified as pullback.
+    let plateauEndIndex = backIndex
+    for (let i = backIndex + 1; i < path.length; i += 1) {
       const distanceFromAim = Math.hypot(path[i].x - primaryAim.x, path[i].y - primaryAim.y)
       if (distanceFromAim >= maxPullbackDistance - PULLBACK_PLATEAU_TOLERANCE) {
-        backIndex = i
+        plateauEndIndex = i
+      } else {
         break
       }
     }
+    backIndex = plateauEndIndex
 
     const backPoint = path[backIndex]
     const pullback = maxPullbackDistance
@@ -582,6 +573,7 @@ function DartDemoPage() {
 
   function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
     event.preventDefault()
+    activePointerIdRef.current = event.pointerId
     event.currentTarget.setPointerCapture(event.pointerId)
     const point = pointerToField(event.clientX, event.clientY, true)
     const aimHit = resolveBaseballZoneHit(point)
@@ -600,7 +592,7 @@ function DartDemoPage() {
   }
 
   function handlePointerMove(event: ReactPointerEvent<HTMLDivElement>): void {
-    if (!isDragging) {
+    if (activePointerIdRef.current !== event.pointerId) {
       return
     }
 
@@ -610,12 +602,16 @@ function DartDemoPage() {
   }
 
   function handlePointerEnd(event: ReactPointerEvent<HTMLDivElement>): void {
-    if (!isDragging) {
+    if (activePointerIdRef.current !== event.pointerId) {
       return
     }
 
     const releasePoint = pointerToField(event.clientX, event.clientY, false)
     gesturePathRef.current.push(releasePoint)
+    activePointerIdRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
     setIsDragging(false)
     setDragPoint(null)
     registerThrow(releasePoint)
@@ -623,6 +619,7 @@ function DartDemoPage() {
   }
 
   function handleReset(): void {
+    activePointerIdRef.current = null
     setThrows([])
     setPrimaryAim(null)
     setAimZoneLabel('')
@@ -678,8 +675,8 @@ function DartDemoPage() {
                       cx={zone.shape.center.x}
                       cy={zone.shape.center.y}
                       r={zone.shape.radius}
-                      fill={zoneColor(zone.id)}
-                      stroke={zoneColor(zone.id)}
+                      fill={zone.color}
+                      stroke={zone.color}
                       strokeWidth={1.6}
                     />
                   )
@@ -690,8 +687,8 @@ function DartDemoPage() {
                     key={zone.id}
                     className="zone-overlay-shape"
                     d={zonePath(zone)}
-                    fill={zoneColor(zone.id)}
-                    stroke={zoneColor(zone.id)}
+                    fill={zone.color}
+                    stroke={zone.color}
                     strokeWidth={1.6}
                   />
                 )
@@ -734,7 +731,7 @@ function DartDemoPage() {
         </div>
 
         <p className="saved-data">
-          Zone overlay: showing all {shownZones.length} zones. Hover a zone to highlight it.
+          Zone overlay: showing all {shownZones.length} zones.
         </p>
         {aimZoneLabel ? <p className="saved-data">{aimZoneLabel}</p> : null}
 
