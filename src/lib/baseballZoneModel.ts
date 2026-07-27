@@ -1174,8 +1174,32 @@ function zoneDistance(point: Point, zone: BaseballZone): number {
   return distanceBetween(point, anchor)
 }
 
-export function resolveBaseballZoneHit(point: Point): { zone: BaseballZone | null; nearest: BaseballZone } {
-  const hit = ZONES_BY_PRIORITY_DESC.find((zone) => pointInZone(point, zone)) ?? null
+function zoneIntersectsCircle(center: Point, radius: number, zone: BaseballZone): boolean {
+  if (pointInZone(center, zone)) {
+    return true
+  }
+
+  const rings = [1, 0.66, 0.33]
+  const segments = 16
+
+  for (const ring of rings) {
+    const sampleRadius = radius * ring
+    for (let i = 0; i < segments; i += 1) {
+      const angleDeg = (i / segments) * 360
+      const sample = pointOnCircle(center, sampleRadius, angleDeg)
+      if (pointInZone(sample, zone)) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+export function resolveBaseballZoneHit(point: Point, radius = 0): { zone: BaseballZone | null; nearest: BaseballZone } {
+  const hit = radius > 0
+    ? ZONES_BY_PRIORITY_DESC.find((zone) => zoneIntersectsCircle(point, radius, zone)) ?? null
+    : ZONES_BY_PRIORITY_DESC.find((zone) => pointInZone(point, zone)) ?? null
 
   let nearest = BASEBALL_ZONES[0]
   let nearestDistance = Number.POSITIVE_INFINITY

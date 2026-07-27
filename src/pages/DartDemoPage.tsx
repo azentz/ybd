@@ -24,6 +24,9 @@ type ThrowResult = {
 type GesturePoint = Point & { t: number }
 
 const FIELD_SIZE = 1000
+const DART_RADIUS_UNITS = 11
+const DART_OUTLINE_WIDTH = 2
+const DART_FILL_RADIUS_UNITS = DART_RADIUS_UNITS - DART_OUTLINE_WIDTH / 2
 
 const MIN_PULLBACK_PIXELS = 28
 const ABSOLUTE_MIN_PULLBACK_PIXELS = 12
@@ -700,7 +703,7 @@ function DartDemoPage() {
       y: clamp(primaryAim.y - speedLift - angleLift + gravityDrop + lowSpeedDrop + jitterY, 0, FIELD_SIZE),
     }
 
-    const hit = resolveBaseballZoneHit(impact)
+    const hit = resolveBaseballZoneHit(impact, DART_RADIUS_UNITS)
     const score = hit.zone?.score ?? 0
     const target = hit.zone?.id ?? 'miss'
     const nearest = hit.nearest.id
@@ -795,11 +798,15 @@ function DartDemoPage() {
     activePointerIdRef.current = event.pointerId
     event.currentTarget.setPointerCapture(event.pointerId)
     const point = pointerToField(event.clientX, event.clientY, true)
-    const aimHit = resolveBaseballZoneHit(point)
-    const aimTarget = aimHit.zone?.id ?? `miss (${aimHit.nearest.id} nearest)`
+    const centerHit = resolveBaseballZoneHit(point)
+    const centerTarget = centerHit.zone?.id ?? `miss (${centerHit.nearest.id} nearest)`
+    const scoringHit = resolveBaseballZoneHit(point, DART_RADIUS_UNITS)
+    const scoringTarget = scoringHit.zone?.id ?? `miss (${scoringHit.nearest.id} nearest)`
 
     setPrimaryAim({ x: point.x, y: point.y })
-    setAimZoneLabel(`Aim zone: ${aimTarget}`)
+    setAimZoneLabel(
+      `Aim center zone: ${centerTarget}. Scoring zone (r=${DART_RADIUS_UNITS}): ${scoringTarget}.`,
+    )
     setStatus('Aim set. Pull back (inside or outside the field), then flick forward and release.')
     setIsDragging(true)
     gesturePathRef.current = [point]
@@ -983,11 +990,17 @@ function DartDemoPage() {
             </svg>
 
             {primaryAim ? (
-              <div
-                className="primary-aim-dot"
-                style={{ left: `${(primaryAim.x / FIELD_SIZE) * 100}%`, top: `${(primaryAim.y / FIELD_SIZE) * 100}%` }}
-                aria-label="Primary aim point"
-              />
+              <svg className="throw-vector throw-vector-field" viewBox={`0 0 ${FIELD_SIZE} ${FIELD_SIZE}`}>
+                <circle
+                  cx={primaryAim.x}
+                  cy={primaryAim.y}
+                  r={DART_FILL_RADIUS_UNITS}
+                  fill="#256290"
+                  stroke="#eef6ff"
+                  strokeWidth={DART_OUTLINE_WIDTH}
+                  aria-label="Primary aim point"
+                />
+              </svg>
             ) : null}
 
             {primaryAim && dragPoint && isDragging ? (
@@ -1004,16 +1017,33 @@ function DartDemoPage() {
               </svg>
             ) : null}
 
-            {throws.slice(0, 8).map((result, index) => (
-              <div
-                key={result.id}
-                className={`impact-dot ${result.target === 'miss' ? 'impact-dot-miss' : 'impact-dot-hit'} ${index === 0 ? 'impact-dot-new' : 'impact-dot-old'}`}
-                style={{ left: `${(result.impact.x / FIELD_SIZE) * 100}%`, top: `${(result.impact.y / FIELD_SIZE) * 100}%` }}
-                aria-label={`Throw ${result.serial}: ${result.target}`}
-              >
-                <span className="impact-index">{result.serial}</span>
-              </div>
-            ))}
+            <svg className="throw-vector throw-vector-field" viewBox={`0 0 ${FIELD_SIZE} ${FIELD_SIZE}`}>
+              {throws.slice(0, 8).map((result) => (
+                <g key={result.id} aria-label={`Throw ${result.serial}: ${result.target}`}>
+                  <circle
+                    cx={result.impact.x}
+                    cy={result.impact.y}
+                    r={DART_FILL_RADIUS_UNITS}
+                    fill={result.target === 'miss' ? '#2f5378' : '#8f1f15'}
+                    stroke={result.target === 'miss' ? '#e3eef9' : '#ffe8cf'}
+                    strokeWidth={DART_OUTLINE_WIDTH}
+                  />
+                  <text
+                    x={result.impact.x}
+                    y={result.impact.y - DART_RADIUS_UNITS - 4}
+                    textAnchor="middle"
+                    fill="#ffffff"
+                    stroke="#20190f"
+                    strokeWidth={0.8}
+                    paintOrder="stroke"
+                    fontSize={9}
+                    fontWeight={700}
+                  >
+                    {result.serial}
+                  </text>
+                </g>
+              ))}
+            </svg>
           </div>
         </div>
 
