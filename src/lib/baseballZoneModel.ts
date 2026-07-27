@@ -221,6 +221,11 @@ const THIRD_BASE_CORNER: Point = {
   x: 1000 - FIRST_BASE_CORNER.x,
   y: FIRST_BASE_CORNER.y,
 }
+const SECOND_BASE_CORNER: Point = {
+  x: HOME_CENTER.x,
+  y: HOME_CENTER.y - (HOME_CENTER.y - FIRST_BASE_CORNER.y) * 2,
+}
+const BASE_ZONE_SIZE = 14
 
 function distanceBetween(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y)
@@ -275,6 +280,32 @@ function pointAlongLine(from: Point, to: Point, distance: number): Point {
     x: from.x + direction.x * distance,
     y: from.y + direction.y * distance,
   }
+}
+
+function addScaled(origin: Point, direction: Point, scale: number): Point {
+  return {
+    x: origin.x + direction.x * scale,
+    y: origin.y + direction.y * scale,
+  }
+}
+
+function baseSquarePoints(
+  corner: Point,
+  edgeTargetA: Point,
+  edgeTargetB: Point,
+  sideLength: number,
+): [Point, Point, Point, Point] {
+  const towardA = unitVector(corner, edgeTargetA)
+  const towardB = unitVector(corner, edgeTargetB)
+  if (!towardA || !towardB) {
+    return [corner, corner, corner, corner]
+  }
+
+  const aEdge = addScaled(corner, towardA, sideLength)
+  const bEdge = addScaled(corner, towardB, sideLength)
+  const opposite = addScaled(aEdge, towardB, sideLength)
+
+  return [corner, aEdge, opposite, bEdge]
 }
 
 function circleFromThreePoints(a: Point, b: Point, c: Point): { center: Point; radius: number } | null {
@@ -592,6 +623,39 @@ export const BASEBALL_ZONES: BaseballZone[] = [
   // },
 
 
+
+  {
+    id: 'first-base-zone-white',
+    label: 'First base zone',
+    score: 2,
+    priority: 92,
+    shape: {
+      kind: 'polygon',
+      points: baseSquarePoints(FIRST_BASE_CORNER, HOME_CENTER, SECOND_BASE_CORNER, BASE_ZONE_SIZE),
+    },
+  },
+
+  {
+    id: 'second-base-zone-white',
+    label: 'Second base zone',
+    score: 2,
+    priority: 92,
+    shape: {
+      kind: 'polygon',
+      points: baseSquarePoints(SECOND_BASE_CORNER, FIRST_BASE_CORNER, THIRD_BASE_CORNER, BASE_ZONE_SIZE),
+    },
+  },
+
+  {
+    id: 'third-base-zone-white',
+    label: 'Third base zone',
+    score: 2,
+    priority: 92,
+    shape: {
+      kind: 'polygon',
+      points: baseSquarePoints(THIRD_BASE_CORNER, HOME_CENTER, SECOND_BASE_CORNER, BASE_ZONE_SIZE),
+    },
+  },
 
   {
     id: 'infield-orange-first-line',

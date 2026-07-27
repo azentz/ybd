@@ -42,6 +42,7 @@ function zoneColor(zoneId: string): string {
   if (zoneId.includes('light-green') || zoneId.includes('green')) return '#31F227'
   if (zoneId.includes('yellow')) return '#F3F32F'
   if (zoneId.includes('orange')) return '#F2822F'
+  if (zoneId.includes('white')) return '#FFFFFF'
   if (zoneId.includes('gray') || zoneId.includes('grey')) return '#6E6E6E'
   if (zoneId.includes('dirt')) return '#8A520D'
   if (zoneId.includes('circle') || zoneId.includes('red') || zoneId.includes('badge')) return '#F30D0D'
