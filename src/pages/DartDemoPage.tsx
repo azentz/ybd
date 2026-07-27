@@ -307,6 +307,7 @@ function DartDemoPage() {
 
   const [dragPoint, setDragPoint] = useState<Point | null>(null)
   const [isDragging, setIsDragging] = useState(false)
+  const [showReference, setShowReference] = useState(false)
   const [primaryAim, setPrimaryAim] = useState<Point | null>(null)
   const [aimZoneLabel, setAimZoneLabel] = useState('')
   const [status, setStatus] = useState('Step 1: Click a primary aim point in the target field.')
@@ -653,13 +654,15 @@ function DartDemoPage() {
             role="application"
             aria-label="Baseball field target"
           >
-            <img
-              className="target-field-image"
-              src={baseballFieldReference}
-              alt="Baseball field reference"
-              draggable={false}
-              onDragStart={handleDragStart}
-            />
+            {showReference ? (
+              <img
+                className="target-field-image"
+                src={baseballFieldReference}
+                alt="Baseball field reference"
+                draggable={false}
+                onDragStart={handleDragStart}
+              />
+            ) : null}
 
             <svg
               className="zone-overlay"
@@ -738,6 +741,9 @@ function DartDemoPage() {
         <p className="status-text">{status}</p>
         {pullQualityLabel ? <p className="saved-data">{pullQualityLabel}</p> : null}
         <div className="button-row">
+          <button type="button" onClick={() => setShowReference((prev) => !prev)}>
+            {showReference ? 'Hide Reference' : 'Show Reference'}
+          </button>
           <button type="button" onClick={handleReset}>Reset Demo</button>
           <Link className="button-link ghost-link" to="/">
             Back Home
