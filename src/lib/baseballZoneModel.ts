@@ -226,6 +226,8 @@ const SECOND_BASE_CORNER: Point = {
   y: HOME_CENTER.y - (HOME_CENTER.y - FIRST_BASE_CORNER.y) * 2,
 }
 const BASE_ZONE_SIZE = 14
+const PITCHERS_PLATE_WIDTH = 34
+const PITCHERS_PLATE_HEIGHT = 9
 const HOME_PLATE_TOP_HALF_WIDTH = 9
 const HOME_PLATE_DEPTH = 18
 const HOME_PLATE_SHOULDER_DEPTH = 9
@@ -323,6 +325,17 @@ function homePlatePoints(
     { x: tip.x + topHalfWidth, y: tip.y - shoulderDepth },
     tip,
     { x: tip.x - topHalfWidth, y: tip.y - shoulderDepth },
+  ]
+}
+
+function centeredRectanglePoints(center: Point, width: number, height: number): [Point, Point, Point, Point] {
+  const halfW = width / 2
+  const halfH = height / 2
+  return [
+    { x: center.x - halfW, y: center.y - halfH },
+    { x: center.x + halfW, y: center.y - halfH },
+    { x: center.x + halfW, y: center.y + halfH },
+    { x: center.x - halfW, y: center.y + halfH },
   ]
 }
 
@@ -688,6 +701,17 @@ export const BASEBALL_ZONES: BaseballZone[] = [
         HOME_PLATE_DEPTH,
         HOME_PLATE_SHOULDER_DEPTH,
       ),
+    },
+  },
+
+  {
+    id: 'pitchers-plate-gray',
+    label: "Pitcher's plate",
+    score: 2,
+    priority: 93,
+    shape: {
+      kind: 'polygon',
+      points: centeredRectanglePoints(PITCHER_CENTER, PITCHERS_PLATE_WIDTH, PITCHERS_PLATE_HEIGHT),
     },
   },
 
