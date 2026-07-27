@@ -1710,6 +1710,7 @@ function DartDemoPage() {
                       stroke="#7A1A09"
                       strokeWidth={1.5}
                       opacity={0.28}
+                      pointerEvents="none"
                     />
                     <path
                       d={bigMacArchesMark.d}
@@ -1717,6 +1718,7 @@ function DartDemoPage() {
                       fill="#F4D000"
                       stroke="#E9C700"
                       strokeWidth={2}
+                      pointerEvents="none"
                     />
                   </>
                 ) : null}

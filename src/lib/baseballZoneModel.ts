@@ -258,6 +258,7 @@ const ZONE_LIGHT_GREEN = '#31F227'
 const ZONE_GREEN = '#1FAF1E'
 const ZONE_DARK_GREEN = '#0A7A10'
 const ZONE_BLUE = '#1C20E6'
+const ZONE_DARK_BLUE = '#0A2A6B'
 const ZONE_GRAY = '#6E6E6E'
 const ZONE_WHITE = '#FFFFFF'
 const ZONE_TRANSPARENT = 'transparent'
@@ -889,7 +890,7 @@ export const BASEBALL_ZONES: BaseballZone[] = [
     id: 'outfield-ground-rule-double',
     score: 2,
     priority: 25,
-    color: ZONE_ORANGE,
+    color: ZONE_DARK_BLUE,
     shape: {
       kind: 'sector',
       center: HOME_CENTER,

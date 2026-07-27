@@ -300,6 +300,7 @@ th {
   border-radius: 18px;
   border: 2px solid #8f6d49;
   background: transparent;
+  cursor: crosshair;
   touch-action: none;
   user-select: none;
   overflow: hidden;
@@ -333,15 +334,14 @@ th {
 }
 
 .zone-overlay-shape {
-  fill-opacity: 0.26;
-  stroke-opacity: 0.95;
-  transition: fill-opacity 140ms ease, stroke-width 140ms ease, filter 140ms ease;
+  fill-opacity: 1;
+  stroke-opacity: 1;
+  transition: stroke-width 140ms ease, filter 140ms ease;
 }
 
 .zone-overlay-shape:hover {
-  fill-opacity: 0.88;
-  stroke-width: 2.4;
-  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.35));
+  stroke-width: 2.8;
+  filter: brightness(1.08) saturate(1.08) drop-shadow(0 0 3px rgba(0, 0, 0, 0.38));
 }
 
 .target-zone {
