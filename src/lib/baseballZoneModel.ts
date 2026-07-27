@@ -261,10 +261,13 @@ const ZONE_BLUE = '#1C20E6'
 const ZONE_GRAY = '#6E6E6E'
 const ZONE_WHITE = '#FFFFFF'
 const ZONE_DIRT = '#8A520D'
-const OUTFIELD_BAND_INNER_RADIUS = 641
+const GROUND_RULE_DOUBLE_INNER_RADIUS = 641
+const GROUND_RULE_DOUBLE_OUTER_RADIUS = 642
+const OUTFIELD_BAND_INNER_RADIUS = GROUND_RULE_DOUBLE_OUTER_RADIUS + 1
 const OUTFIELD_BAND_OUTER_RADIUS = 700
 const BIG_MAC_LEFT_ANGLE = 243
 const BIG_MAC_RIGHT_ANGLE = 250
+const FOUL_POLE_ANGLE_WIDTH = 0.2
 const OUTFIELD_BLUE_INNER_ARC_RADIUS = averageArcRadiusFromCenter(
   HOME_CENTER,
   PITCHER_CENTER,
@@ -880,6 +883,20 @@ export const BASEBALL_ZONES: BaseballZone[] = [
     },
   },
   {
+    id: 'outfield-ground-rule-double',
+    score: 2,
+    priority: 25,
+    color: ZONE_ORANGE,
+    shape: {
+      kind: 'sector',
+      center: HOME_CENTER,
+      innerRadius: GROUND_RULE_DOUBLE_INNER_RADIUS,
+      outerRadius: GROUND_RULE_DOUBLE_OUTER_RADIUS,
+      startAngleDeg: FAN_START,
+      endAngleDeg: FAN_END,
+    },
+  },
+  {
     id: 'outfield-dark-green',
     score: 1,
     priority: 20,
@@ -891,6 +908,36 @@ export const BASEBALL_ZONES: BaseballZone[] = [
       outerRadius: 640,
       startAngleDeg: FAN_START,
       endAngleDeg: FAN_END,
+    },
+  },
+  {
+    id: 'outfield-left-foul-pole',
+    score: 1,
+    priority: 15,
+    color: ZONE_YELLOW,
+    shape: {
+      kind: 'arc-band-slice',
+      sideCenter: HOME_CENTER,
+      leftAngleDeg: FAN_START,
+      rightAngleDeg: FAN_START + FOUL_POLE_ANGLE_WIDTH,
+      arcCenter: PITCHER_CENTER,
+      innerArcRadius: OUTFIELD_BLUE_INNER_ARC_RADIUS,
+      outerArcRadius: OUTFIELD_BLUE_OUTER_ARC_RADIUS,
+    },
+  },
+  {
+    id: 'outfield-right-foul-pole',
+    score: 1,
+    priority: 15,
+    color: ZONE_YELLOW,
+    shape: {
+      kind: 'arc-band-slice',
+      sideCenter: HOME_CENTER,
+      leftAngleDeg: FAN_END - FOUL_POLE_ANGLE_WIDTH,
+      rightAngleDeg: FAN_END,
+      arcCenter: PITCHER_CENTER,
+      innerArcRadius: OUTFIELD_BLUE_INNER_ARC_RADIUS,
+      outerArcRadius: OUTFIELD_BLUE_OUTER_ARC_RADIUS,
     },
   },
   {
