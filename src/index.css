@@ -305,6 +305,12 @@ th {
   overflow: hidden;
 }
 
+.target-field-stage {
+  width: min(100%, 1000px);
+  display: grid;
+  gap: 8px;
+}
+
 .target-field-image {
   position: absolute;
   inset: 0;
@@ -493,8 +499,161 @@ th {
   z-index: 3;
 }
 
+.field-count-panel {
+  position: absolute;
+  left: 14px;
+  top: 83.3%;
+  transform: translateY(-50%);
+  z-index: 5;
+  pointer-events: none;
+  background: rgba(22, 27, 31, 0.8);
+  border: 1px solid rgba(236, 240, 242, 0.32);
+  border-radius: 10px;
+  padding: 8px 9px;
+  display: grid;
+  gap: 6px;
+  min-width: 86px;
+}
+
+.count-row {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.count-label {
+  color: #f3f6f7;
+  font-weight: 700;
+  font-size: 0.73rem;
+  text-align: center;
+}
+
+.count-lights {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.count-light {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: rgba(193, 203, 209, 0.25);
+  border: 1px solid rgba(246, 250, 252, 0.35);
+}
+
+.count-light.is-on.is-ball {
+  background: #f0d145;
+  border-color: #ffe893;
+}
+
+.count-light.is-on.is-strike {
+  background: #4db8ff;
+  border-color: #b4e3ff;
+}
+
+.count-light.is-on.is-out {
+  background: #ff6b57;
+  border-color: #ffb2a8;
+}
+
+.field-scoreboard {
+  border: 1px solid #7a5f43;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #21160f, #160f0a);
+  padding: 8px;
+  overflow-x: auto;
+}
+
+.field-scoreboard-grid {
+  display: grid;
+  align-items: center;
+  gap: 3px;
+  min-width: 520px;
+}
+
+.score-cell {
+  min-height: 24px;
+  border: 1px solid rgba(255, 239, 216, 0.2);
+  background: rgba(245, 223, 190, 0.06);
+  color: #f7e8cf;
+  font-size: 0.74rem;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
+
+.score-head {
+  background: rgba(255, 203, 128, 0.12);
+  color: #ffd78f;
+}
+
+.score-team,
+.score-team-head {
+  justify-items: start;
+  padding-left: 8px;
+  letter-spacing: 0.04em;
+}
+
+.score-team-away {
+  color: #9dd3ff;
+  background: rgba(56, 139, 253, 0.16);
+}
+
+.score-team-home {
+  color: #ffbfad;
+  background: rgba(248, 81, 73, 0.16);
+}
+
+.is-active-batting {
+  box-shadow: inset 0 0 0 1px rgba(255, 241, 217, 0.38);
+}
+
+.score-total {
+  background: rgba(255, 161, 106, 0.15);
+  color: #ffe1b8;
+}
+
+.is-current-inning {
+  background: rgba(77, 184, 255, 0.18);
+  color: #d8f2ff;
+}
+
+.batting-team-indicator {
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 241, 217, 0.3);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.batting-team-away {
+  color: #d7ebff;
+  background: rgba(56, 139, 253, 0.22);
+}
+
+.batting-team-home {
+  color: #ffe2d9;
+  background: rgba(248, 81, 73, 0.22);
+}
+
 @media (min-width: 700px) {
   .button-row {
     grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .field-count-panel {
+    top: 83.3%;
+    left: 10px;
+    min-width: 78px;
+    padding: 7px 8px;
+  }
+
+  .score-cell {
+    min-height: 22px;
+    font-size: 0.7rem;
   }
 }

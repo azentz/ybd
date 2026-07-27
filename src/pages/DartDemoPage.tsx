@@ -15,6 +15,8 @@ import {
 type ThrowResult = {
   id: string
   serial: number
+  battingTeam: 'away' | 'home'
+  inningLabel: string
   target: string
   nearest: string
   impact: Point
@@ -34,11 +36,15 @@ type BaseRunnerState = {
 
 type GameState = {
   inning: number
+  half: 'top' | 'bottom'
+  battingTeam: 'away' | 'home'
   balls: number
   strikes: number
   outs: number
-  inningScores: number[]
-  totalRuns: number
+  awayInningScores: number[]
+  homeInningScores: number[]
+  awayTotalRuns: number
+  homeTotalRuns: number
   baseRunners: BaseRunnerState
 }
 
@@ -59,6 +65,8 @@ type PlayResolution = {
   nextState: GameState
   call: string
   runsScored: number
+  halfInningOver: boolean
+  plateAppearanceOver: boolean
 }
 
 type GesturePoint = Point & { t: number }
@@ -755,6 +763,10 @@ function addRunsToInning(inningScores: number[], inning: number, runs: number): 
   return next
 }
 
+function inningLabel(inning: number, half: 'top' | 'bottom'): string {
+  return `${half === 'top' ? 'Top' : 'Bottom'} ${inning}`
+}
+
 function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution {
   let nextBalls = gameState.balls
   let nextStrikes = gameState.strikes
@@ -762,6 +774,7 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
   let nextRunners = gameState.baseRunners
   let runsScored = 0
   let call = ''
+  let plateAppearanceOver = false
 
   if (outcome === 'single') {
     const moved = advanceOnHit(nextRunners, 1)
@@ -769,6 +782,7 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
     runsScored = moved.runs
     nextBalls = 0
     nextStrikes = 0
+    plateAppearanceOver = true
     call = `Single${runsScored > 0 ? `, ${runsScored} run${runsScored === 1 ? '' : 's'} scored` : ''}`
   } else if (outcome === 'double') {
     const moved = advanceOnHit(nextRunners, 2)
@@ -776,6 +790,7 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
     runsScored = moved.runs
     nextBalls = 0
     nextStrikes = 0
+    plateAppearanceOver = true
     call = `Double${runsScored > 0 ? `, ${runsScored} run${runsScored === 1 ? '' : 's'} scored` : ''}`
   } else if (outcome === 'triple') {
     const moved = advanceOnHit(nextRunners, 3)
@@ -783,6 +798,7 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
     runsScored = moved.runs
     nextBalls = 0
     nextStrikes = 0
+    plateAppearanceOver = true
     call = `Triple${runsScored > 0 ? `, ${runsScored} run${runsScored === 1 ? '' : 's'} scored` : ''}`
   } else if (outcome === 'home-run') {
     const moved = advanceOnHit(nextRunners, 4)
@@ -790,6 +806,7 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
     runsScored = moved.runs
     nextBalls = 0
     nextStrikes = 0
+    plateAppearanceOver = true
     call = `Home run! ${runsScored} run${runsScored === 1 ? '' : 's'} scored`
   } else if (outcome === 'ball') {
     const balls = nextBalls + 1
@@ -799,6 +816,7 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
       runsScored = walked.runs
       nextBalls = 0
       nextStrikes = 0
+      plateAppearanceOver = true
       call = `Ball four, walk${runsScored > 0 ? ` and ${runsScored} run scored` : ''}`
     } else {
       nextBalls = balls
@@ -810,12 +828,14 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
       nextOuts += 1
       nextBalls = 0
       nextStrikes = 0
+      plateAppearanceOver = true
       call = 'Strike three, batter out'
     } else {
       nextStrikes = strikes
       call = `Strike ${nextStrikes}`
     }
   } else if (outcome === 'sac-bunt') {
+    plateAppearanceOver = true
     const hadRunners = hasAnyRunner(nextRunners)
     const resultingOuts = nextOuts + 1
     if (resultingOuts >= 3) {
@@ -834,6 +854,7 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
     nextBalls = 0
     nextStrikes = 0
   } else if (outcome === 'sac-fly') {
+    plateAppearanceOver = true
     const hadRunners = hasAnyRunner(nextRunners)
     const resultingOuts = nextOuts + 1
     if (resultingOuts >= 3) {
@@ -852,6 +873,7 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
     nextBalls = 0
     nextStrikes = 0
   } else if (outcome === 'double-play-out') {
+    plateAppearanceOver = true
     if (hasAnyRunner(nextRunners)) {
       nextRunners = applyDoublePlayRunners(nextRunners)
       nextOuts += 2
@@ -863,11 +885,13 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
     nextBalls = 0
     nextStrikes = 0
   } else if (outcome === 'triple-play-out') {
+    plateAppearanceOver = true
     nextOuts += 3
     nextBalls = 0
     nextStrikes = 0
     call = 'Triple play'
   } else {
+    plateAppearanceOver = true
     nextOuts += 1
     nextBalls = 0
     nextStrikes = 0
@@ -875,29 +899,53 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
   }
 
   let nextInning = gameState.inning
-  let inningOver = false
+  let nextHalf = gameState.half
+  let nextBattingTeam = gameState.battingTeam
+  let halfInningOver = false
   if (nextOuts >= 3) {
-    inningOver = true
-    nextInning += 1
+    halfInningOver = true
+    if (gameState.battingTeam === 'away') {
+      nextHalf = 'bottom'
+      nextBattingTeam = 'home'
+    } else {
+      nextHalf = 'top'
+      nextBattingTeam = 'away'
+      nextInning += 1
+    }
     nextOuts = 0
     nextRunners = emptyBases()
   }
 
-  const inningScores = addRunsToInning(gameState.inningScores, gameState.inning, runsScored)
-  while (inningScores.length < nextInning) {
-    inningScores.push(0)
+  const awayInningScores = gameState.battingTeam === 'away'
+    ? addRunsToInning(gameState.awayInningScores, gameState.inning, runsScored)
+    : [...gameState.awayInningScores]
+  const homeInningScores = gameState.battingTeam === 'home'
+    ? addRunsToInning(gameState.homeInningScores, gameState.inning, runsScored)
+    : [...gameState.homeInningScores]
+
+  while (awayInningScores.length < nextInning) {
+    awayInningScores.push(0)
+  }
+  while (homeInningScores.length < nextInning) {
+    homeInningScores.push(0)
   }
 
   return {
-    call: inningOver ? `${call}. Inning over.` : call,
+    call: halfInningOver ? `${call}. ${gameState.battingTeam === 'away' ? 'Top' : 'Bottom'} half over.` : call,
     runsScored,
+    halfInningOver,
+    plateAppearanceOver,
     nextState: {
       inning: nextInning,
+      half: nextHalf,
+      battingTeam: nextBattingTeam,
       balls: nextBalls,
       strikes: nextStrikes,
       outs: nextOuts,
-      inningScores,
-      totalRuns: gameState.totalRuns + runsScored,
+      awayInningScores,
+      homeInningScores,
+      awayTotalRuns: gameState.awayTotalRuns + (gameState.battingTeam === 'away' ? runsScored : 0),
+      homeTotalRuns: gameState.homeTotalRuns + (gameState.battingTeam === 'home' ? runsScored : 0),
       baseRunners: nextRunners,
     },
   }
@@ -907,6 +955,7 @@ function DartDemoPage() {
   const fieldRef = useRef<HTMLDivElement | null>(null)
   const throwSerialRef = useRef(0)
   const activePointerIdRef = useRef<number | null>(null)
+  const clearFieldThrowsBeforeNextPitchRef = useRef(false)
 
   const [dragPoint, setDragPoint] = useState<Point | null>(null)
   const [isDragging, setIsDragging] = useState(false)
@@ -915,15 +964,20 @@ function DartDemoPage() {
   const [aimZoneLabel, setAimZoneLabel] = useState('')
   const [status, setStatus] = useState('Step 1: Click a primary aim point in the target field.')
   const [throws, setThrows] = useState<ThrowResult[]>([])
+  const [fieldThrows, setFieldThrows] = useState<ThrowResult[]>([])
   const [pullQualityLabel, setPullQualityLabel] = useState('')
   const [clickToThrowMode, setClickToThrowMode] = useState(false)
   const [gameState, setGameState] = useState<GameState>({
     inning: 1,
+    half: 'top',
+    battingTeam: 'away',
     balls: 0,
     strikes: 0,
     outs: 0,
-    inningScores: [0],
-    totalRuns: 0,
+    awayInningScores: [0],
+    homeInningScores: [0],
+    awayTotalRuns: 0,
+    homeTotalRuns: 0,
     baseRunners: emptyBases(),
   })
   const gesturePathRef = useRef<GesturePoint[]>([])
@@ -995,6 +1049,18 @@ function DartDemoPage() {
     }
   }, [])
 
+  const scoreboardInnings = useMemo(() => {
+    const inningCount = Math.max(9, gameState.awayInningScores.length, gameState.homeInningScores.length, gameState.inning)
+    return Array.from({ length: inningCount }, (_, index) => ({
+      inning: index + 1,
+      awayRuns: gameState.awayInningScores[index] ?? 0,
+      homeRuns: gameState.homeInningScores[index] ?? 0,
+      isCurrent: index + 1 === gameState.inning,
+    }))
+  }, [gameState.awayInningScores, gameState.homeInningScores, gameState.inning])
+
+  const scoreboardGridColumns = `96px repeat(${scoreboardInnings.length}, minmax(24px, 1fr)) 46px`
+
   function pointerToField(clientX: number, clientY: number, clampToField: boolean): GesturePoint {
     const rect = fieldRef.current?.getBoundingClientRect()
 
@@ -1027,6 +1093,8 @@ function DartDemoPage() {
     const outcome = isThirdBaseTriplePlay
       ? 'triple-play-out'
       : classifyPlay(hit.zone?.id ?? null, onTargetField)
+    const battingTeam = gameState.battingTeam
+    const currentInningLabel = inningLabel(gameState.inning, gameState.half)
     const resolution = resolvePlay(gameState, outcome)
 
     setGameState(resolution.nextState)
@@ -1036,6 +1104,8 @@ function DartDemoPage() {
     const result: ThrowResult = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       serial: throwSerialRef.current,
+      battingTeam,
+      inningLabel: currentInningLabel,
       target,
       nearest,
       impact,
@@ -1048,8 +1118,15 @@ function DartDemoPage() {
     }
 
     setThrows((prev) => [result, ...prev].slice(0, 12))
+    setFieldThrows((prev) => {
+      const currentBatterThrows = clearFieldThrowsBeforeNextPitchRef.current ? [] : prev
+      const next = [...currentBatterThrows, result]
+
+      clearFieldThrowsBeforeNextPitchRef.current = resolution.halfInningOver || resolution.plateAppearanceOver
+      return next
+    })
     setStatus(
-      `${resolution.call} Zone: ${target === 'miss' ? `miss (${nearest} nearest)` : target}. Count ${resolution.nextState.balls}-${resolution.nextState.strikes}, outs ${resolution.nextState.outs}, inning ${resolution.nextState.inning}.`,
+      `${resolution.call} Zone: ${target === 'miss' ? `miss (${nearest} nearest)` : target}. Count ${resolution.nextState.balls}-${resolution.nextState.strikes}, outs ${resolution.nextState.outs}, ${inningLabel(resolution.nextState.inning, resolution.nextState.half)} (${resolution.nextState.battingTeam.toUpperCase()} batting).`,
     )
     setPullQualityLabel(qualitySummary)
   }
@@ -1365,7 +1442,9 @@ function DartDemoPage() {
 
   function handleReset(): void {
     activePointerIdRef.current = null
+    clearFieldThrowsBeforeNextPitchRef.current = false
     setThrows([])
+    setFieldThrows([])
     setPrimaryAim(null)
     setAimZoneLabel('')
     gesturePathRef.current = []
@@ -1373,11 +1452,15 @@ function DartDemoPage() {
     setPullQualityLabel('')
     setGameState({
       inning: 1,
+      half: 'top',
+      battingTeam: 'away',
       balls: 0,
       strikes: 0,
       outs: 0,
-      inningScores: [0],
-      totalRuns: 0,
+      awayInningScores: [0],
+      homeInningScores: [0],
+      awayTotalRuns: 0,
+      homeTotalRuns: 0,
       baseRunners: emptyBases(),
     })
     setStatus('Demo reset. Step 1: click a primary aim point in the target field.')
@@ -1396,168 +1479,253 @@ function DartDemoPage() {
       <section className="card" aria-labelledby="dart-demo-title">
         <h2 id="dart-demo-title">Target Field</h2>
         <div className="dart-demo-layout">
-          <div
-            ref={fieldRef}
-            className="target-field"
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerEnd}
-            onPointerCancel={handlePointerEnd}
-            onDragStart={handleDragStart}
-            role="application"
-            aria-label="Baseball field target"
-          >
-            {showReference ? (
-              <img
-                className="target-field-image"
-                src={baseballFieldReference}
-                alt="Baseball field reference"
-                draggable={false}
-                onDragStart={handleDragStart}
-              />
-            ) : null}
-
-            <svg
-              className="zone-overlay"
-              viewBox={`0 0 ${FIELD_SIZE} ${FIELD_SIZE}`}
-              aria-label="Hit zone overlay"
+          <div className="target-field-stage">
+            <div
+              ref={fieldRef}
+              className="target-field"
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerEnd}
+              onPointerCancel={handlePointerEnd}
+              onDragStart={handleDragStart}
+              role="application"
+              aria-label="Baseball field target"
             >
-              {shownZones.map((zone: BaseballZone) => {
-                if (zone.id === 'outfield-big-mac-land') {
-                  return null
-                }
+              {showReference ? (
+                <img
+                  className="target-field-image"
+                  src={baseballFieldReference}
+                  alt="Baseball field reference"
+                  draggable={false}
+                  onDragStart={handleDragStart}
+                />
+              ) : null}
 
-                if (zone.shape.kind === 'circle') {
+              <svg
+                className="zone-overlay"
+                viewBox={`0 0 ${FIELD_SIZE} ${FIELD_SIZE}`}
+                aria-label="Hit zone overlay"
+              >
+                {shownZones.map((zone: BaseballZone) => {
+                  if (zone.id === 'outfield-big-mac-land') {
+                    return null
+                  }
+
+                  if (zone.shape.kind === 'circle') {
+                    return (
+                      <circle
+                        key={zone.id}
+                        className="zone-overlay-shape"
+                        cx={zone.shape.center.x}
+                        cy={zone.shape.center.y}
+                        r={zone.shape.radius}
+                        fill={zone.color}
+                        stroke={zone.color}
+                        strokeWidth={1.6}
+                      />
+                    )
+                  }
+
                   return (
-                    <circle
+                    <path
                       key={zone.id}
                       className="zone-overlay-shape"
-                      cx={zone.shape.center.x}
-                      cy={zone.shape.center.y}
-                      r={zone.shape.radius}
+                      d={zonePath(zone)}
                       fill={zone.color}
                       stroke={zone.color}
                       strokeWidth={1.6}
                     />
                   )
-                }
+                })}
 
-                return (
-                  <path
-                    key={zone.id}
-                    className="zone-overlay-shape"
-                    d={zonePath(zone)}
-                    fill={zone.color}
-                    stroke={zone.color}
-                    strokeWidth={1.6}
-                  />
-                )
-              })}
+                {bigMacBlueOverlay ? (
+                  <>
+                    <defs>
+                      <clipPath id="big-mac-blue-clip">
+                        <path d={bigMacBlueOverlay.clipPath} />
+                      </clipPath>
+                    </defs>
+                    <path
+                      className="zone-overlay-shape"
+                      d={bigMacBlueOverlay.sourcePath}
+                      clipPath="url(#big-mac-blue-clip)"
+                      fill="#F30D0D"
+                      stroke="#F30D0D"
+                      strokeWidth={1.6}
+                    />
+                  </>
+                ) : null}
 
-              {bigMacBlueOverlay ? (
-                <>
-                  <defs>
-                    <clipPath id="big-mac-blue-clip">
-                      <path d={bigMacBlueOverlay.clipPath} />
-                    </clipPath>
-                  </defs>
-                  <path
-                    className="zone-overlay-shape"
-                    d={bigMacBlueOverlay.sourcePath}
-                    clipPath="url(#big-mac-blue-clip)"
-                    fill="#F30D0D"
-                    stroke="#F30D0D"
-                    strokeWidth={1.6}
-                  />
-                </>
-              ) : null}
-
-              {bigMacArchesMark ? (
-                <>
-                  <path
-                    d={bigMacArchesMark.d}
-                    transform={bigMacArchesMark.transform}
-                    fill="#7A1A09"
-                    stroke="#7A1A09"
-                    strokeWidth={1.5}
-                    opacity={0.28}
-                  />
-                  <path
-                    d={bigMacArchesMark.d}
-                    transform={bigMacArchesMark.transform}
-                    fill="#F4D000"
-                    stroke="#E9C700"
-                    strokeWidth={2}
-                  />
-                </>
-              ) : null}
-            </svg>
-
-            {primaryAim ? (
-              <svg className="throw-vector throw-vector-field" viewBox={`0 0 ${FIELD_SIZE} ${FIELD_SIZE}`}>
-                <circle
-                  cx={primaryAim.x}
-                  cy={primaryAim.y}
-                  r={DART_FILL_RADIUS_UNITS}
-                  fill="#256290"
-                  stroke="#eef6ff"
-                  strokeWidth={DART_OUTLINE_WIDTH}
-                  aria-label="Primary aim point"
-                />
+                {bigMacArchesMark ? (
+                  <>
+                    <path
+                      d={bigMacArchesMark.d}
+                      transform={bigMacArchesMark.transform}
+                      fill="#7A1A09"
+                      stroke="#7A1A09"
+                      strokeWidth={1.5}
+                      opacity={0.28}
+                    />
+                    <path
+                      d={bigMacArchesMark.d}
+                      transform={bigMacArchesMark.transform}
+                      fill="#F4D000"
+                      stroke="#E9C700"
+                      strokeWidth={2}
+                    />
+                  </>
+                ) : null}
               </svg>
-            ) : null}
 
-            {primaryAim && dragPoint && isDragging ? (
-              <svg className="throw-vector throw-vector-field" viewBox={`0 0 ${FIELD_SIZE} ${FIELD_SIZE}`}>
-                <line
-                  x1={primaryAim.x}
-                  y1={primaryAim.y}
-                  x2={dragPoint.x}
-                  y2={dragPoint.y}
-                  stroke="currentColor"
-                  strokeWidth="4"
-                  strokeLinecap="round"
-                />
-              </svg>
-            ) : null}
-
-            <svg className="throw-vector throw-vector-field" viewBox={`0 0 ${FIELD_SIZE} ${FIELD_SIZE}`}>
-              {gameState.baseRunners.first && baseRunnerMarkers.first ? (
-                baseRunnerGlyph(baseRunnerMarkers.first, 'Runner on first base')
-              ) : null}
-              {gameState.baseRunners.second && baseRunnerMarkers.second ? (
-                baseRunnerGlyph(baseRunnerMarkers.second, 'Runner on second base')
-              ) : null}
-              {gameState.baseRunners.third && baseRunnerMarkers.third ? (
-                baseRunnerGlyph(baseRunnerMarkers.third, 'Runner on third base')
-              ) : null}
-
-              {throws.slice(0, 8).map((result) => (
-                <g key={result.id} aria-label={`Throw ${result.serial}: ${result.target}`}>
+              {primaryAim ? (
+                <svg className="throw-vector throw-vector-field" viewBox={`0 0 ${FIELD_SIZE} ${FIELD_SIZE}`}>
                   <circle
-                    cx={result.impact.x}
-                    cy={result.impact.y}
+                    cx={primaryAim.x}
+                    cy={primaryAim.y}
                     r={DART_FILL_RADIUS_UNITS}
-                    fill={result.target === 'miss' ? '#2f5378' : '#8f1f15'}
-                    stroke={result.target === 'miss' ? '#e3eef9' : '#ffe8cf'}
+                    fill="#256290"
+                    stroke="#eef6ff"
                     strokeWidth={DART_OUTLINE_WIDTH}
+                    aria-label="Primary aim point"
                   />
-                  <text
-                    x={result.impact.x}
-                    y={result.impact.y - DART_RADIUS_UNITS - 4}
-                    textAnchor="middle"
-                    fill="#ffffff"
-                    stroke="#20190f"
-                    strokeWidth={0.8}
-                    paintOrder="stroke"
-                    fontSize={9}
-                    fontWeight={700}
-                  >
-                    {result.serial}
-                  </text>
-                </g>
-              ))}
-            </svg>
+                </svg>
+              ) : null}
+
+              {primaryAim && dragPoint && isDragging ? (
+                <svg className="throw-vector throw-vector-field" viewBox={`0 0 ${FIELD_SIZE} ${FIELD_SIZE}`}>
+                  <line
+                    x1={primaryAim.x}
+                    y1={primaryAim.y}
+                    x2={dragPoint.x}
+                    y2={dragPoint.y}
+                    stroke="currentColor"
+                    strokeWidth="4"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              ) : null}
+
+              <svg className="throw-vector throw-vector-field" viewBox={`0 0 ${FIELD_SIZE} ${FIELD_SIZE}`}>
+                {gameState.baseRunners.first && baseRunnerMarkers.first ? (
+                  baseRunnerGlyph(baseRunnerMarkers.first, 'Runner on first base')
+                ) : null}
+                {gameState.baseRunners.second && baseRunnerMarkers.second ? (
+                  baseRunnerGlyph(baseRunnerMarkers.second, 'Runner on second base')
+                ) : null}
+                {gameState.baseRunners.third && baseRunnerMarkers.third ? (
+                  baseRunnerGlyph(baseRunnerMarkers.third, 'Runner on third base')
+                ) : null}
+
+                {fieldThrows.map((result) => (
+                  <g key={result.id} aria-label={`Throw ${result.serial}: ${result.target}`}>
+                    {(() => {
+                      const isAway = result.battingTeam === 'away'
+                      const isMiss = result.target === 'miss'
+                      const fill = isAway
+                        ? (isMiss ? '#1f4d86' : '#2e78d2')
+                        : (isMiss ? '#8f261f' : '#d24a3b')
+                      const stroke = isAway ? '#e3efff' : '#ffe2dc'
+
+                      return (
+                        <circle
+                          cx={result.impact.x}
+                          cy={result.impact.y}
+                          r={DART_FILL_RADIUS_UNITS}
+                          fill={fill}
+                          stroke={stroke}
+                          strokeWidth={DART_OUTLINE_WIDTH}
+                        />
+                      )
+                    })()}
+                    <text
+                      x={result.impact.x}
+                      y={result.impact.y - DART_RADIUS_UNITS - 4}
+                      textAnchor="middle"
+                      fill="#ffffff"
+                      stroke="#20190f"
+                      strokeWidth={0.8}
+                      paintOrder="stroke"
+                      fontSize={9}
+                      fontWeight={700}
+                    >
+                      {result.serial}
+                    </text>
+                  </g>
+                ))}
+              </svg>
+
+              <div className="field-count-panel" aria-label="Balls strikes outs">
+                <div className="count-row">
+                  <span className="count-label">B</span>
+                  <div className="count-lights">
+                    {[0, 1, 2].map((index) => (
+                      <span
+                        key={`ball-${index}`}
+                        className={`count-light ${gameState.balls > index ? 'is-on is-ball' : ''}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div className="count-row">
+                  <span className="count-label">S</span>
+                  <div className="count-lights">
+                    {[0, 1].map((index) => (
+                      <span
+                        key={`strike-${index}`}
+                        className={`count-light ${gameState.strikes > index ? 'is-on is-strike' : ''}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div className="count-row">
+                  <span className="count-label">O</span>
+                  <div className="count-lights">
+                    {[0, 1].map((index) => (
+                      <span
+                        key={`out-${index}`}
+                        className={`count-light ${gameState.outs > index ? 'is-on is-out' : ''}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="field-scoreboard" aria-label="Inning scoreboard">
+              <div className="field-scoreboard-grid" style={{ gridTemplateColumns: scoreboardGridColumns }}>
+                <div className="score-cell score-head score-team-head">TEAM</div>
+                {scoreboardInnings.map((entry) => (
+                  <div key={`head-${entry.inning}`} className={`score-cell score-head ${entry.isCurrent ? 'is-current-inning' : ''}`}>
+                    {entry.inning}
+                  </div>
+                ))}
+                <div className="score-cell score-head">R</div>
+
+                <div
+                  className={`score-cell score-team score-team-away ${gameState.battingTeam === 'away' ? 'is-active-batting' : ''}`}
+                >
+                  AWAY{gameState.battingTeam === 'away' ? ' *' : ''}
+                </div>
+                {scoreboardInnings.map((entry) => (
+                  <div key={`away-${entry.inning}`} className={`score-cell ${entry.isCurrent ? 'is-current-inning' : ''}`}>
+                    {entry.awayRuns}
+                  </div>
+                ))}
+                <div className="score-cell score-total">{gameState.awayTotalRuns}</div>
+
+                <div
+                  className={`score-cell score-team score-team-home ${gameState.battingTeam === 'home' ? 'is-active-batting' : ''}`}
+                >
+                  HOME{gameState.battingTeam === 'home' ? ' *' : ''}
+                </div>
+                {scoreboardInnings.map((entry) => (
+                  <div key={`home-${entry.inning}`} className={`score-cell ${entry.isCurrent ? 'is-current-inning' : ''}`}>
+                    {entry.homeRuns}
+                  </div>
+                ))}
+                <div className="score-cell score-total">{gameState.homeTotalRuns}</div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1581,12 +1749,11 @@ function DartDemoPage() {
           </label>
         </div>
 
-        <div className="runner-controls" aria-label="Base runner state">
-          <span className="runner-controls-label">Count:</span>
-          <span>{gameState.balls} balls</span>
-          <span>{gameState.strikes} strikes</span>
-          <span>{gameState.outs} outs</span>
-          <span>Inning {gameState.inning}</span>
+        <div className="runner-controls" aria-label="Batting state">
+          <span className="runner-controls-label">At bat:</span>
+          <span className={`batting-team-indicator batting-team-${gameState.battingTeam}`}>
+            {gameState.battingTeam.toUpperCase()} ({inningLabel(gameState.inning, gameState.half)})
+          </span>
         </div>
         <div className="runner-controls" aria-label="Base occupancy state">
           <span className="runner-controls-label">Runners:</span>
@@ -1607,11 +1774,6 @@ function DartDemoPage() {
 
       <section className="card" aria-labelledby="score-title">
         <h2 id="score-title">Score + Throw Log</h2>
-        <p className="saved-data"><strong>Total runs:</strong> {gameState.totalRuns}</p>
-        <p className="saved-data">
-          <strong>Inning scores:</strong>{' '}
-          {gameState.inningScores.map((runs, index) => `Inning ${index + 1}: ${runs}`).join(' | ')}
-        </p>
         {throws.length === 0 ? (
           <p className="saved-data">No throws yet.</p>
         ) : (
@@ -1620,6 +1782,7 @@ function DartDemoPage() {
               <thead>
                 <tr>
                   <th>Throw</th>
+                  <th>Team/Inning</th>
                   <th>Zone</th>
                   <th>Call</th>
                   <th>Runs</th>
@@ -1631,6 +1794,7 @@ function DartDemoPage() {
                 {throws.map((result, index) => (
                   <tr key={result.id}>
                     <td>{index + 1}</td>
+                    <td>{result.battingTeam.toUpperCase()} {result.inningLabel}</td>
                     <td>{result.target === 'miss' ? `miss (${result.nearest} nearest)` : result.target}</td>
                     <td>{result.call}</td>
                     <td>{result.runsScored}</td>
