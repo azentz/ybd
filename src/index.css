@@ -272,6 +272,26 @@ th {
   width: 100%;
 }
 
+.runner-controls {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  color: #2c2014;
+  font-size: 0.95rem;
+}
+
+.runner-controls-label {
+  font-weight: 700;
+}
+
+.runner-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .target-field {
   position: relative;
   width: min(100%, 1000px);

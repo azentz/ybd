@@ -21,6 +21,12 @@ type ThrowResult = {
   impact: Point
 }
 
+type BaseRunnerState = {
+  first: boolean
+  second: boolean
+  third: boolean
+}
+
 type GesturePoint = Point & { t: number }
 
 const FIELD_SIZE = 1000
@@ -38,6 +44,8 @@ const MAX_FLICK_SPEED = 2.2
 const MIN_CONTROL_FACTOR = 0.25
 const TAU = Math.PI * 2
 const OUTER_ARC_BULGE = 0
+const BASE_RUNNER_SCALE = 1.15
+const BASE_RUNNER_COLOR = '#121212'
 const GOLDEN_ARCHES_VIEWBOX_WIDTH = 272.7
 const GOLDEN_ARCHES_VIEWBOX_HEIGHT = 238.5
 const GOLDEN_ARCHES_PATH_D =
@@ -462,6 +470,56 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
+function centroid(points: Point[]): Point {
+  const total = points.reduce(
+    (acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }),
+    { x: 0, y: 0 },
+  )
+
+  return {
+    x: total.x / points.length,
+    y: total.y / points.length,
+  }
+}
+
+function zonePoint(zoneId: string): Point | null {
+  const zone = BASEBALL_ZONES.find((candidate) => candidate.id === zoneId)
+  if (!zone) {
+    return null
+  }
+
+  if (zone.shape.kind === 'circle') {
+    return zone.shape.center
+  }
+
+  if (zone.shape.kind === 'polygon') {
+    return centroid(zone.shape.points)
+  }
+
+  return null
+}
+
+function baseRunnerGlyph(anchor: Point, label: string) {
+  return (
+    <g
+      aria-label={label}
+      transform={`translate(${anchor.x} ${anchor.y}) scale(${BASE_RUNNER_SCALE})`}
+      pointerEvents="none"
+    >
+      <circle cx={0} cy={-9.4} r={2.35} fill={BASE_RUNNER_COLOR} />
+      <polygon points="-1.1,-7.3 1.2,-7.3 2.1,-2.3 0,-1.1 -2.1,-2.3" fill={BASE_RUNNER_COLOR} />
+      <path
+        d="M 0 -6.2 L -3.9 -3.6 M 0 -5.6 L 4.2 -3.1 M 0 -2.1 L -3.5 3.3 M 0 -2.1 L 4.5 2.4"
+        fill="none"
+        stroke={BASE_RUNNER_COLOR}
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </g>
+  )
+}
+
 function DartDemoPage() {
   const fieldRef = useRef<HTMLDivElement | null>(null)
   const throwSerialRef = useRef(0)
@@ -475,6 +533,11 @@ function DartDemoPage() {
   const [status, setStatus] = useState('Step 1: Click a primary aim point in the target field.')
   const [throws, setThrows] = useState<ThrowResult[]>([])
   const [pullQualityLabel, setPullQualityLabel] = useState('')
+  const [baseRunners, setBaseRunners] = useState<BaseRunnerState>({
+    first: false,
+    second: false,
+    third: false,
+  })
   const gesturePathRef = useRef<GesturePoint[]>([])
 
   const orderedZones = useMemo(
@@ -533,6 +596,18 @@ function DartDemoPage() {
   )
 
   const totalScore = useMemo(() => throws.reduce((sum, result) => sum + result.score, 0), [throws])
+
+  const baseRunnerMarkers = useMemo(() => {
+    const first = zonePoint('first-base-zone-white')
+    const second = zonePoint('second-base-zone-white')
+    const third = zonePoint('third-base-zone-white')
+
+    return {
+      first,
+      second,
+      third,
+    }
+  }, [])
 
   function pointerToField(clientX: number, clientY: number, clampToField: boolean): GesturePoint {
     const rect = fieldRef.current?.getBoundingClientRect()
@@ -879,6 +954,13 @@ function DartDemoPage() {
     setStatus('Demo reset. Step 1: click a primary aim point in the target field.')
   }
 
+  function toggleBaseRunner(base: keyof BaseRunnerState): void {
+    setBaseRunners((prev) => ({
+      ...prev,
+      [base]: !prev[base],
+    }))
+  }
+
   return (
     <main className="app-shell">
       <header className="hero">
@@ -1018,6 +1100,16 @@ function DartDemoPage() {
             ) : null}
 
             <svg className="throw-vector throw-vector-field" viewBox={`0 0 ${FIELD_SIZE} ${FIELD_SIZE}`}>
+              {baseRunners.first && baseRunnerMarkers.first ? (
+                baseRunnerGlyph(baseRunnerMarkers.first, 'Runner on first base')
+              ) : null}
+              {baseRunners.second && baseRunnerMarkers.second ? (
+                baseRunnerGlyph(baseRunnerMarkers.second, 'Runner on second base')
+              ) : null}
+              {baseRunners.third && baseRunnerMarkers.third ? (
+                baseRunnerGlyph(baseRunnerMarkers.third, 'Runner on third base')
+              ) : null}
+
               {throws.slice(0, 8).map((result) => (
                 <g key={result.id} aria-label={`Throw ${result.serial}: ${result.target}`}>
                   <circle
@@ -1054,6 +1146,33 @@ function DartDemoPage() {
 
         <p className="status-text">{status}</p>
         {pullQualityLabel ? <p className="saved-data">{pullQualityLabel}</p> : null}
+        <div className="runner-controls" aria-label="Base runner controls">
+          <span className="runner-controls-label">Base runners:</span>
+          <label>
+            <input
+              type="checkbox"
+              checked={baseRunners.first}
+              onChange={() => toggleBaseRunner('first')}
+            />
+            1B
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={baseRunners.second}
+              onChange={() => toggleBaseRunner('second')}
+            />
+            2B
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={baseRunners.third}
+              onChange={() => toggleBaseRunner('third')}
+            />
+            3B
+          </label>
+        </div>
         <div className="button-row">
           <button type="button" onClick={() => setShowReference((prev) => !prev)}>
             {showReference ? 'Hide Reference' : 'Show Reference'}
