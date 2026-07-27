@@ -5,6 +5,7 @@ import baseballFieldReference from '../assets/baseball-field-reference-02.svg'
 import {
   BASEBALL_ZONES,
   PITCHER_CENTER,
+  resolveChordArcGeometry,
   resolveBaseballZoneHit,
   type BaseballZone,
   type Point,
@@ -281,11 +282,26 @@ function circleLensPath(shape: Extract<ZoneShape, { kind: 'circle-lens' }>): str
   ].join(' ')
 }
 
+function chordArcPath(shape: Extract<ZoneShape, { kind: 'chord-arc' }>): string {
+  const geometry = resolveChordArcGeometry(shape)
+  if (!geometry) {
+    return ''
+  }
+
+  return [
+    `M ${shape.start.x} ${shape.start.y}`,
+    `L ${shape.end.x} ${shape.end.y}`,
+    `A ${geometry.arcRadius} ${geometry.arcRadius} 0 0 ${geometry.sweepFlag} ${shape.start.x} ${shape.start.y}`,
+    'Z',
+  ].join(' ')
+}
+
 function zonePath(zone: BaseballZone): string {
   const shape = zone.shape
   if (shape.kind === 'sector') return sectorPath(shape)
   if (shape.kind === 'arc-triangle') return arcTrianglePath(shape)
   if (shape.kind === 'circle-lens') return circleLensPath(shape)
+  if (shape.kind === 'chord-arc') return chordArcPath(shape)
   if (shape.kind === 'polygon') {
     return polygonPath(shape.points)
   }

@@ -35,7 +35,24 @@ export type CircleLensShape = {
   secondaryRadius: number
 }
 
-export type ZoneShape = SectorShape | CircleShape | PolygonShape | ArcTriangleShape | CircleLensShape
+export type ChordArcShape = {
+  kind: 'chord-arc'
+  start: Point
+  end: Point
+  arcCenter?: Point
+  arcRadius?: number
+  sweepFlag?: 0 | 1
+  arcSidePoint?: Point
+  arcMidOffset?: number
+}
+
+export type ChordArcGeometry = {
+  arcCenter: Point
+  arcRadius: number
+  sweepFlag: 0 | 1
+}
+
+export type ZoneShape = SectorShape | CircleShape | PolygonShape | ArcTriangleShape | CircleLensShape | ChordArcShape
 
 export type BaseballZone = {
   id: string
@@ -198,6 +215,167 @@ const THIRD_BASE_RED_CENTER: Point = {
 }
 const THIRD_BASE_RED_RADIUS = FIRST_BASE_RED_RADIUS
 const THIRD_BASE_GRAY_PITCHER_RADIUS = FIRST_BASE_GRAY_PITCHER_RADIUS
+
+const FIRST_BASE_CORNER: Point = { x: 633, y: 700 }
+const THIRD_BASE_CORNER: Point = {
+  x: 1000 - FIRST_BASE_CORNER.x,
+  y: FIRST_BASE_CORNER.y,
+}
+
+function distanceBetween(a: Point, b: Point): number {
+  return Math.hypot(a.x - b.x, a.y - b.y)
+}
+
+function midpoint(a: Point, b: Point): Point {
+  return {
+    x: (a.x + b.x) / 2,
+    y: (a.y + b.y) / 2,
+  }
+}
+
+function unitVector(from: Point, to: Point): Point | null {
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const length = Math.hypot(dx, dy)
+  if (length <= Number.EPSILON) {
+    return null
+  }
+
+  return {
+    x: dx / length,
+    y: dy / length,
+  }
+}
+
+function averageArcRadiusFromCenter(
+  fanCenter: Point,
+  arcCenter: Point,
+  fanRadius: number,
+  startAngleDeg: number,
+  endAngleDeg: number,
+): number {
+  const start = pointOnCircle(fanCenter, fanRadius, startAngleDeg)
+  const end = pointOnCircle(fanCenter, fanRadius, endAngleDeg)
+  return (distanceBetween(start, arcCenter) + distanceBetween(end, arcCenter)) / 2
+}
+
+function lineSide(start: Point, end: Point, point: Point): number {
+  const lineDx = end.x - start.x
+  const lineDy = end.y - start.y
+  return lineDx * (point.y - start.y) - lineDy * (point.x - start.x)
+}
+
+function pointAlongLine(from: Point, to: Point, distance: number): Point {
+  const direction = unitVector(from, to)
+  if (!direction) {
+    return from
+  }
+
+  return {
+    x: from.x + direction.x * distance,
+    y: from.y + direction.y * distance,
+  }
+}
+
+function circleFromThreePoints(a: Point, b: Point, c: Point): { center: Point; radius: number } | null {
+  const d = 2 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y))
+  if (Math.abs(d) <= Number.EPSILON) {
+    return null
+  }
+
+  const a2 = a.x * a.x + a.y * a.y
+  const b2 = b.x * b.x + b.y * b.y
+  const c2 = c.x * c.x + c.y * c.y
+
+  const ux = (a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d
+  const uy = (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d
+
+  const center = { x: ux, y: uy }
+  const radius = Math.hypot(a.x - ux, a.y - uy)
+  return { center, radius }
+}
+
+function arcMidpointFromCenter(
+  start: Point,
+  end: Point,
+  center: Point,
+  sweepFlag: 0 | 1,
+): Point {
+  const norm = (angle: number): number => {
+    const wrapped = angle % (Math.PI * 2)
+    return wrapped < 0 ? wrapped + Math.PI * 2 : wrapped
+  }
+
+  const aStart = Math.atan2(start.y - center.y, start.x - center.x)
+  const aEnd = Math.atan2(end.y - center.y, end.x - center.x)
+  let delta = norm(aEnd - aStart)
+  if (sweepFlag === 0 && delta > 0) delta -= Math.PI * 2
+  if (sweepFlag === 1 && delta < 0) delta += Math.PI * 2
+
+  const midAngle = aStart + delta / 2
+  const radius = Math.hypot(start.x - center.x, start.y - center.y)
+  return {
+    x: center.x + Math.cos(midAngle) * radius,
+    y: center.y + Math.sin(midAngle) * radius,
+  }
+}
+
+export function resolveChordArcGeometry(shape: ChordArcShape): ChordArcGeometry | null {
+  if (shape.arcCenter && typeof shape.arcRadius === 'number' && typeof shape.sweepFlag === 'number') {
+    return {
+      arcCenter: shape.arcCenter,
+      arcRadius: shape.arcRadius,
+      sweepFlag: shape.sweepFlag,
+    }
+  }
+
+  if (!shape.arcSidePoint || typeof shape.arcMidOffset !== 'number') {
+    return null
+  }
+
+  const direction = unitVector(shape.start, shape.end)
+  if (!direction) {
+    return null
+  }
+
+  const chordMidpoint = midpoint(shape.start, shape.end)
+
+  const n1 = { x: direction.y, y: -direction.x }
+  const n2 = { x: -direction.y, y: direction.x }
+
+  const through1 = {
+    x: chordMidpoint.x + n1.x * shape.arcMidOffset,
+    y: chordMidpoint.y + n1.y * shape.arcMidOffset,
+  }
+  const through2 = {
+    x: chordMidpoint.x + n2.x * shape.arcMidOffset,
+    y: chordMidpoint.y + n2.y * shape.arcMidOffset,
+  }
+
+  const d1 = distanceBetween(through1, shape.arcSidePoint)
+  const d2 = distanceBetween(through2, shape.arcSidePoint)
+  const through = d1 <= d2 ? through1 : through2
+
+  const circle = circleFromThreePoints(shape.end, through, shape.start)
+  if (!circle) {
+    return null
+  }
+
+  const sweepCandidates: Array<0 | 1> = [0, 1]
+  const sweepFlag = sweepCandidates.reduce((best, sweep) => {
+    const mid = arcMidpointFromCenter(shape.end, shape.start, circle.center, sweep)
+    const bestMid = arcMidpointFromCenter(shape.end, shape.start, circle.center, best)
+    const dist = distanceBetween(mid, through)
+    const bestDist = distanceBetween(bestMid, through)
+    return dist < bestDist ? sweep : best
+  }, 0 as 0 | 1)
+
+  return {
+    arcCenter: circle.center,
+    arcRadius: circle.radius,
+    sweepFlag,
+  }
+}
 
 export const BASEBALL_ZONES: BaseballZone[] = [
   {
@@ -414,6 +592,34 @@ export const BASEBALL_ZONES: BaseballZone[] = [
   // },
 
 
+
+  {
+    id: 'infield-orange-first-line',
+    label: 'Infield orange first-base line arc',
+    score: 2,
+    priority: 91,
+    shape: {
+      kind: 'chord-arc',
+      start: pointAlongLine(HOME_CENTER, FIRST_BASE_CORNER, 58),
+      end: pointAlongLine(HOME_CENTER, FIRST_BASE_CORNER, 130),
+      arcSidePoint: FIRST_BASE_CORNER,
+      arcMidOffset: 5,
+    },
+  },
+
+  {
+    id: 'infield-orange-third-line',
+    label: 'Infield orange third-base line arc',
+    score: 2,
+    priority: 91,
+    shape: {
+      kind: 'chord-arc',
+      start: pointAlongLine(HOME_CENTER, THIRD_BASE_CORNER, 58),
+      end: pointAlongLine(HOME_CENTER, THIRD_BASE_CORNER, 130),
+      arcSidePoint: THIRD_BASE_CORNER,
+      arcMidOffset: 5,
+    },
+  },
 
   {
     id: 'infield-yellow-home',
@@ -652,22 +858,26 @@ function pointInSector(point: Point, shape: SectorShape): boolean {
 
   // When rendering uses pitcher-centered arcs, evaluate radial membership from that same center.
   if (!sameCenter) {
-    const outerStart = pointOnCircle(shape.center, shape.outerRadius, shape.startAngleDeg)
-    const outerEnd = pointOnCircle(shape.center, shape.outerRadius, shape.endAngleDeg)
-    const outerArcRadius =
-      (Math.hypot(outerStart.x - arcCenter.x, outerStart.y - arcCenter.y)
-        + Math.hypot(outerEnd.x - arcCenter.x, outerEnd.y - arcCenter.y)) / 2
+    const outerArcRadius = averageArcRadiusFromCenter(
+      shape.center,
+      arcCenter,
+      shape.outerRadius,
+      shape.startAngleDeg,
+      shape.endAngleDeg,
+    )
 
     let innerArcRadius = 0
     if (shape.innerRadius > 0) {
-      const innerStart = pointOnCircle(shape.center, shape.innerRadius, shape.startAngleDeg)
-      const innerEnd = pointOnCircle(shape.center, shape.innerRadius, shape.endAngleDeg)
-      innerArcRadius =
-        (Math.hypot(innerStart.x - arcCenter.x, innerStart.y - arcCenter.y)
-          + Math.hypot(innerEnd.x - arcCenter.x, innerEnd.y - arcCenter.y)) / 2
+      innerArcRadius = averageArcRadiusFromCenter(
+        shape.center,
+        arcCenter,
+        shape.innerRadius,
+        shape.startAngleDeg,
+        shape.endAngleDeg,
+      )
     }
 
-    const arcDistance = Math.hypot(point.x - arcCenter.x, point.y - arcCenter.y)
+    const arcDistance = distanceBetween(point, arcCenter)
     return arcDistance >= innerArcRadius && arcDistance <= outerArcRadius
   }
 
@@ -677,6 +887,28 @@ function pointInSector(point: Point, shape: SectorShape): boolean {
 
 function pointInCircle(point: Point, shape: CircleShape): boolean {
   return Math.hypot(point.x - shape.center.x, point.y - shape.center.y) <= shape.radius
+}
+
+function pointInChordArc(point: Point, shape: ChordArcShape): boolean {
+  const geometry = resolveChordArcGeometry(shape)
+  if (!geometry) {
+    return false
+  }
+
+  const inCircle = distanceBetween(point, geometry.arcCenter) <= geometry.arcRadius
+  if (!inCircle) {
+    return false
+  }
+
+  const arcMid = arcMidpointFromCenter(shape.end, shape.start, geometry.arcCenter, geometry.sweepFlag)
+  const sideAtArc = lineSide(shape.start, shape.end, arcMid)
+  const sideAtPoint = lineSide(shape.start, shape.end, point)
+
+  if (Math.abs(sideAtArc) <= Number.EPSILON) {
+    return false
+  }
+
+  return sideAtArc > 0 ? sideAtPoint >= -Number.EPSILON : sideAtPoint <= Number.EPSILON
 }
 
 function pointInPolygon(point: Point, shape: PolygonShape): boolean {
@@ -750,32 +982,49 @@ function pointInArcTriangle(point: Point, shape: ArcTriangleShape): boolean {
 }
 
 export function pointInZone(point: Point, zone: BaseballZone): boolean {
-  if (zone.shape.kind === 'sector') {
-    return pointInSector(point, zone.shape)
+  switch (zone.shape.kind) {
+    case 'sector':
+      return pointInSector(point, zone.shape)
+    case 'circle':
+      return pointInCircle(point, zone.shape)
+    case 'chord-arc':
+      return pointInChordArc(point, zone.shape)
+    case 'circle-lens': {
+      const inPrimary = distanceBetween(point, zone.shape.primaryCenter) <= zone.shape.primaryRadius
+      const inSecondary = distanceBetween(point, zone.shape.secondaryCenter) <= zone.shape.secondaryRadius
+      return inPrimary && inSecondary
+    }
+    case 'arc-triangle':
+      return pointInArcTriangle(point, zone.shape)
+    case 'polygon':
+      return pointInPolygon(point, zone.shape)
   }
-  if (zone.shape.kind === 'circle') {
-    return pointInCircle(point, zone.shape)
-  }
-  if (zone.shape.kind === 'circle-lens') {
-    const inPrimary = Math.hypot(
-      point.x - zone.shape.primaryCenter.x,
-      point.y - zone.shape.primaryCenter.y,
-    ) <= zone.shape.primaryRadius
-    const inSecondary = Math.hypot(
-      point.x - zone.shape.secondaryCenter.x,
-      point.y - zone.shape.secondaryCenter.y,
-    ) <= zone.shape.secondaryRadius
-    return inPrimary && inSecondary
-  }
-  if (zone.shape.kind === 'arc-triangle') {
-    return pointInArcTriangle(point, zone.shape)
-  }
-  return pointInPolygon(point, zone.shape)
 }
 
 function zoneAnchor(zone: BaseballZone): Point {
   if (zone.shape.kind === 'sector' || zone.shape.kind === 'circle') {
     return zone.shape.center
+  }
+
+  if (zone.shape.kind === 'chord-arc') {
+    const geometry = resolveChordArcGeometry(zone.shape)
+    if (!geometry) {
+      return {
+        x: (zone.shape.start.x + zone.shape.end.x) / 2,
+        y: (zone.shape.start.y + zone.shape.end.y) / 2,
+      }
+    }
+
+    const mid = arcMidpointFromCenter(
+      zone.shape.end,
+      zone.shape.start,
+      geometry.arcCenter,
+      geometry.sweepFlag,
+    )
+    return {
+      x: (zone.shape.start.x + zone.shape.end.x + mid.x) / 3,
+      y: (zone.shape.start.y + zone.shape.end.y + mid.y) / 3,
+    }
   }
 
   if (zone.shape.kind === 'circle-lens') {
@@ -785,32 +1034,24 @@ function zoneAnchor(zone: BaseballZone): Point {
     }
   }
 
-  if (zone.shape.kind === 'arc-triangle') {
-    const total = zone.shape.points.reduce(
-      (acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }),
-      { x: 0, y: 0 },
-    )
+  return centroid(zone.shape.points)
+}
 
-    return {
-      x: total.x / zone.shape.points.length,
-      y: total.y / zone.shape.points.length,
-    }
-  }
-
-  const total = zone.shape.points.reduce(
+function centroid(points: Point[]): Point {
+  const total = points.reduce(
     (acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }),
     { x: 0, y: 0 },
   )
 
   return {
-    x: total.x / zone.shape.points.length,
-    y: total.y / zone.shape.points.length,
+    x: total.x / points.length,
+    y: total.y / points.length,
   }
 }
 
 function zoneDistance(point: Point, zone: BaseballZone): number {
   const anchor = zoneAnchor(zone)
-  return Math.hypot(point.x - anchor.x, point.y - anchor.y)
+  return distanceBetween(point, anchor)
 }
 
 export function resolveBaseballZoneHit(point: Point): { zone: BaseballZone | null; nearest: BaseballZone } {
