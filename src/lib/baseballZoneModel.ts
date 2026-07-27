@@ -46,13 +46,30 @@ export type ChordArcShape = {
   arcMidOffset?: number
 }
 
+export type ArcBandSliceShape = {
+  kind: 'arc-band-slice'
+  sideCenter: Point
+  leftAngleDeg: number
+  rightAngleDeg: number
+  arcCenter: Point
+  innerArcRadius: number
+  outerArcRadius: number
+}
+
 export type ChordArcGeometry = {
   arcCenter: Point
   arcRadius: number
   sweepFlag: 0 | 1
 }
 
-export type ZoneShape = SectorShape | CircleShape | PolygonShape | ArcTriangleShape | CircleLensShape | ChordArcShape
+export type ZoneShape =
+  | SectorShape
+  | CircleShape
+  | PolygonShape
+  | ArcTriangleShape
+  | CircleLensShape
+  | ChordArcShape
+  | ArcBandSliceShape
 
 export type BaseballZone = {
   id: string
@@ -248,6 +265,24 @@ const ZONE_BLUE = '#1C20E6'
 const ZONE_GRAY = '#6E6E6E'
 const ZONE_WHITE = '#FFFFFF'
 const ZONE_DIRT = '#8A520D'
+const OUTFIELD_BAND_INNER_RADIUS = 641
+const OUTFIELD_BAND_OUTER_RADIUS = 700
+const BIG_MAC_LEFT_ANGLE = 243
+const BIG_MAC_RIGHT_ANGLE = 250
+const OUTFIELD_BLUE_INNER_ARC_RADIUS = averageArcRadiusFromCenter(
+  HOME_CENTER,
+  PITCHER_CENTER,
+  OUTFIELD_BAND_INNER_RADIUS,
+  FAN_START,
+  FAN_END,
+)
+const OUTFIELD_BLUE_OUTER_ARC_RADIUS = averageArcRadiusFromCenter(
+  HOME_CENTER,
+  PITCHER_CENTER,
+  OUTFIELD_BAND_OUTER_RADIUS,
+  FAN_START,
+  FAN_END,
+)
 
 function distanceBetween(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y)
@@ -356,6 +391,40 @@ function centeredRectanglePoints(center: Point, width: number, height: number): 
   ]
 }
 
+function rayCircleIntersection(
+  rayOrigin: Point,
+  rayAngleDeg: number,
+  circleCenter: Point,
+  circleRadius: number,
+): Point | null {
+  const angleRad = (rayAngleDeg * Math.PI) / 180
+  const dx = Math.cos(angleRad)
+  const dy = Math.sin(angleRad)
+
+  const ox = rayOrigin.x - circleCenter.x
+  const oy = rayOrigin.y - circleCenter.y
+
+  const b = 2 * (ox * dx + oy * dy)
+  const c = ox * ox + oy * oy - circleRadius * circleRadius
+  const disc = b * b - 4 * c
+  if (disc < 0) {
+    return null
+  }
+
+  const sqrtDisc = Math.sqrt(disc)
+  const t1 = (-b + sqrtDisc) / 2
+  const t2 = (-b - sqrtDisc) / 2
+  const t = Math.max(t1, t2)
+  if (t < 0) {
+    return null
+  }
+
+  return {
+    x: rayOrigin.x + dx * t,
+    y: rayOrigin.y + dy * t,
+  }
+}
+
 function circleFromThreePoints(a: Point, b: Point, c: Point): { center: Point; radius: number } | null {
   const d = 2 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y))
   if (Math.abs(d) <= Number.EPSILON) {
@@ -452,6 +521,22 @@ export function resolveChordArcGeometry(shape: ChordArcShape): ChordArcGeometry 
 }
 
 export const BASEBALL_ZONES: BaseballZone[] = [
+  {
+    id: 'outfield-big-mac-land',
+    score: 1,
+    priority: 150,
+    color: ZONE_RED,
+    shape: {
+      kind: 'arc-band-slice',
+      sideCenter: HOME_CENTER,
+      leftAngleDeg: BIG_MAC_LEFT_ANGLE,
+      rightAngleDeg: BIG_MAC_RIGHT_ANGLE,
+      arcCenter: PITCHER_CENTER,
+      innerArcRadius: OUTFIELD_BLUE_INNER_ARC_RADIUS,
+      outerArcRadius: OUTFIELD_BLUE_OUTER_ARC_RADIUS,
+    },
+  },
+
   {
     id: 'badge-center-red',
     score: 5,
@@ -820,8 +905,8 @@ export const BASEBALL_ZONES: BaseballZone[] = [
     shape: {
       kind: 'sector',
       center: HOME_CENTER,
-      innerRadius: 641,
-      outerRadius: 700,
+      innerRadius: OUTFIELD_BAND_INNER_RADIUS,
+      outerRadius: OUTFIELD_BAND_OUTER_RADIUS,
       startAngleDeg: FAN_START,
       endAngleDeg: FAN_END,
     },
@@ -919,6 +1004,16 @@ function pointInChordArc(point: Point, shape: ChordArcShape): boolean {
   return sideAtArc > 0 ? sideAtPoint >= -Number.EPSILON : sideAtPoint <= Number.EPSILON
 }
 
+function pointInArcBandSlice(point: Point, shape: ArcBandSliceShape): boolean {
+  const angle = normalizeAngle((Math.atan2(point.y - shape.sideCenter.y, point.x - shape.sideCenter.x) * 180) / Math.PI)
+  if (!isAngleInRange(angle, shape.leftAngleDeg, shape.rightAngleDeg)) {
+    return false
+  }
+
+  const arcDistance = distanceBetween(point, shape.arcCenter)
+  return arcDistance >= shape.innerArcRadius && arcDistance <= shape.outerArcRadius
+}
+
 function pointInPolygon(point: Point, shape: PolygonShape): boolean {
   let inside = false
   const pts = shape.points
@@ -992,6 +1087,8 @@ export function pointInZone(point: Point, zone: BaseballZone): boolean {
       return pointInCircle(point, zone.shape)
     case 'chord-arc':
       return pointInChordArc(point, zone.shape)
+    case 'arc-band-slice':
+      return pointInArcBandSlice(point, zone.shape)
     case 'circle-lens': {
       const inPrimary = distanceBetween(point, zone.shape.primaryCenter) <= zone.shape.primaryRadius
       const inSecondary = distanceBetween(point, zone.shape.secondaryCenter) <= zone.shape.secondaryRadius
@@ -1035,6 +1132,30 @@ function zoneAnchor(zone: BaseballZone): Point {
       x: (zone.shape.primaryCenter.x + zone.shape.secondaryCenter.x) / 2,
       y: (zone.shape.primaryCenter.y + zone.shape.secondaryCenter.y) / 2,
     }
+  }
+
+  if (zone.shape.kind === 'arc-band-slice') {
+    const midAngle = normalizeAngle(
+      zone.shape.leftAngleDeg + normalizeAngle(zone.shape.rightAngleDeg - zone.shape.leftAngleDeg) / 2,
+    )
+    const outer = rayCircleIntersection(
+      zone.shape.sideCenter,
+      midAngle,
+      zone.shape.arcCenter,
+      zone.shape.outerArcRadius,
+    )
+    const inner = rayCircleIntersection(
+      zone.shape.sideCenter,
+      midAngle,
+      zone.shape.arcCenter,
+      zone.shape.innerArcRadius,
+    )
+
+    if (outer && inner) {
+      return midpoint(outer, inner)
+    }
+
+    return midpoint(zone.shape.sideCenter, zone.shape.arcCenter)
   }
 
   return centroid(zone.shape.points)

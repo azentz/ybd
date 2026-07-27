@@ -35,6 +35,19 @@ const MAX_FLICK_SPEED = 2.2
 const MIN_CONTROL_FACTOR = 0.25
 const TAU = Math.PI * 2
 const OUTER_ARC_BULGE = 0
+const GOLDEN_ARCHES_VIEWBOX_WIDTH = 272.7
+const GOLDEN_ARCHES_VIEWBOX_HEIGHT = 238.5
+const GOLDEN_ARCHES_PATH_D =
+  'm195.8 17.933c23.3 0 42.2 98.3 42.2 219.7h34c0-130.7-34.3-236.5-76.3-236.5-24 0-45.2 31.7-59.2 81.5-14-49.8-35.2-81.5-59-81.5-42 0-76.2 105.7-76.2 236.4h34c0-121.4 18.7-219.6 42-219.6s42.2 90.8 42.2 202.8h33.8c0-112 19-202.8 42.3-202.8'
+
+type LogoPathMark = {
+  d: string
+  transform: string
+}
+
+type BigMacZoneShape =
+  | Extract<ZoneShape, { kind: 'arc-band-slice' }>
+  | Extract<ZoneShape, { kind: 'sector' }>
 
 function pointOnCircle(center: Point, radius: number, angleDeg: number): Point {
   const angleRad = (angleDeg * Math.PI) / 180
@@ -270,6 +283,151 @@ function circleLensPath(shape: Extract<ZoneShape, { kind: 'circle-lens' }>): str
   ].join(' ')
 }
 
+function rayCircleIntersection(
+  rayOrigin: Point,
+  rayAngleDeg: number,
+  circleCenter: Point,
+  circleRadius: number,
+): Point | null {
+  const angleRad = (rayAngleDeg * Math.PI) / 180
+  const dx = Math.cos(angleRad)
+  const dy = Math.sin(angleRad)
+
+  const ox = rayOrigin.x - circleCenter.x
+  const oy = rayOrigin.y - circleCenter.y
+
+  const b = 2 * (ox * dx + oy * dy)
+  const c = ox * ox + oy * oy - circleRadius * circleRadius
+  const disc = b * b - 4 * c
+  if (disc < 0) {
+    return null
+  }
+
+  const sqrtDisc = Math.sqrt(disc)
+  const t1 = (-b + sqrtDisc) / 2
+  const t2 = (-b - sqrtDisc) / 2
+  const t = Math.max(t1, t2)
+  if (t < 0) {
+    return null
+  }
+
+  return {
+    x: rayOrigin.x + dx * t,
+    y: rayOrigin.y + dy * t,
+  }
+}
+
+function upperArcSweep(center: Point, radius: number, start: Point, end: Point): 0 | 1 {
+  const mid0 = arcMidpoint(center, radius, start, end, 0)
+  const mid1 = arcMidpoint(center, radius, start, end, 1)
+  return mid0.y <= mid1.y ? 0 : 1
+}
+
+function arcBandSlicePath(shape: Extract<ZoneShape, { kind: 'arc-band-slice' }>): string {
+  const outerLeft = rayCircleIntersection(
+    shape.sideCenter,
+    shape.leftAngleDeg,
+    shape.arcCenter,
+    shape.outerArcRadius,
+  )
+  const outerRight = rayCircleIntersection(
+    shape.sideCenter,
+    shape.rightAngleDeg,
+    shape.arcCenter,
+    shape.outerArcRadius,
+  )
+  const innerLeft = rayCircleIntersection(
+    shape.sideCenter,
+    shape.leftAngleDeg,
+    shape.arcCenter,
+    shape.innerArcRadius,
+  )
+  const innerRight = rayCircleIntersection(
+    shape.sideCenter,
+    shape.rightAngleDeg,
+    shape.arcCenter,
+    shape.innerArcRadius,
+  )
+
+  if (!outerLeft || !outerRight || !innerLeft || !innerRight) {
+    return ''
+  }
+
+  const outerSweep = upperArcSweep(shape.arcCenter, shape.outerArcRadius, outerLeft, outerRight)
+  const innerSweep = upperArcSweep(shape.arcCenter, shape.innerArcRadius, innerRight, innerLeft)
+
+  return [
+    `M ${outerLeft.x} ${outerLeft.y}`,
+    `A ${shape.outerArcRadius} ${shape.outerArcRadius} 0 0 ${outerSweep} ${outerRight.x} ${outerRight.y}`,
+    `L ${innerRight.x} ${innerRight.y}`,
+    `A ${shape.innerArcRadius} ${shape.innerArcRadius} 0 0 ${innerSweep} ${innerLeft.x} ${innerLeft.y}`,
+    'Z',
+  ].join(' ')
+}
+
+function bigMacZoneCorners(shape: BigMacZoneShape): { outerLeft: Point; outerRight: Point; innerLeft: Point; innerRight: Point } | null {
+  if (shape.kind === 'arc-band-slice') {
+    const outerLeft = rayCircleIntersection(shape.sideCenter, shape.leftAngleDeg, shape.arcCenter, shape.outerArcRadius)
+    const outerRight = rayCircleIntersection(shape.sideCenter, shape.rightAngleDeg, shape.arcCenter, shape.outerArcRadius)
+    const innerLeft = rayCircleIntersection(shape.sideCenter, shape.leftAngleDeg, shape.arcCenter, shape.innerArcRadius)
+    const innerRight = rayCircleIntersection(shape.sideCenter, shape.rightAngleDeg, shape.arcCenter, shape.innerArcRadius)
+
+    if (!outerLeft || !outerRight || !innerLeft || !innerRight) {
+      return null
+    }
+
+    return { outerLeft, outerRight, innerLeft, innerRight }
+  }
+
+  return {
+    outerLeft: pointOnCircle(shape.center, shape.outerRadius, shape.startAngleDeg),
+    outerRight: pointOnCircle(shape.center, shape.outerRadius, shape.endAngleDeg),
+    innerLeft: pointOnCircle(shape.center, shape.innerRadius, shape.startAngleDeg),
+    innerRight: pointOnCircle(shape.center, shape.innerRadius, shape.endAngleDeg),
+  }
+}
+
+function goldenArchesMark(shape: BigMacZoneShape): LogoPathMark | null {
+  const corners = bigMacZoneCorners(shape)
+  if (!corners) {
+    return null
+  }
+
+  const { outerLeft, outerRight, innerLeft, innerRight } = corners
+
+  // Build a local frame so the logo naturally follows the zone's tilt.
+  const topVec = {
+    x: outerRight.x - outerLeft.x,
+    y: outerRight.y - outerLeft.y,
+  }
+  const sideVec = {
+    x: ((innerLeft.x - outerLeft.x) + (innerRight.x - outerRight.x)) / 2,
+    y: ((innerLeft.y - outerLeft.y) + (innerRight.y - outerRight.y)) / 2,
+  }
+
+
+  // Overscan the source mark and clip at render time so the arches read bolder.
+  const marginU = 0.10
+  const marginV = 0.12
+  const scaleU = 1 - marginU * 2
+  const scaleV = 1 - marginV * 2
+
+  const sx = scaleU / GOLDEN_ARCHES_VIEWBOX_WIDTH
+  const sy = scaleV / GOLDEN_ARCHES_VIEWBOX_HEIGHT
+
+  const a = topVec.x * sx
+  const b = topVec.y * sx
+  const c = sideVec.x * sy
+  const d = sideVec.y * sy
+  const e = outerLeft.x + topVec.x * marginU + sideVec.x * marginV
+  const f = outerLeft.y + topVec.y * marginU + sideVec.y * marginV
+
+  return {
+    d: GOLDEN_ARCHES_PATH_D,
+    transform: `matrix(${a} ${b} ${c} ${d} ${e} ${f})`,
+  }
+}
+
 function chordArcPath(shape: Extract<ZoneShape, { kind: 'chord-arc' }>): string {
   const geometry = resolveChordArcGeometry(shape)
   if (!geometry) {
@@ -290,6 +448,7 @@ function zonePath(zone: BaseballZone): string {
   if (shape.kind === 'arc-triangle') return arcTrianglePath(shape)
   if (shape.kind === 'circle-lens') return circleLensPath(shape)
   if (shape.kind === 'chord-arc') return chordArcPath(shape)
+  if (shape.kind === 'arc-band-slice') return arcBandSlicePath(shape)
   if (shape.kind === 'polygon') {
     return polygonPath(shape.points)
   }
@@ -321,6 +480,54 @@ function DartDemoPage() {
   )
 
   const shownZones = orderedZones
+
+  const bigMacLandShape = useMemo(() => {
+    const zone = BASEBALL_ZONES.find((candidate) => candidate.id === 'outfield-big-mac-land')
+    if (!zone || (zone.shape.kind !== 'arc-band-slice' && zone.shape.kind !== 'sector')) {
+      return null
+    }
+
+    return zone.shape
+  }, [])
+
+  const outfieldBlueShape = useMemo(() => {
+    const zone = BASEBALL_ZONES.find((candidate) => candidate.id === 'outfield-blue')
+    if (!zone || zone.shape.kind !== 'sector') {
+      return null
+    }
+
+    return zone.shape
+  }, [])
+
+  const bigMacBlueOverlay = useMemo(() => {
+    if (!bigMacLandShape || !outfieldBlueShape) {
+      return null
+    }
+
+    const center = bigMacLandShape.kind === 'arc-band-slice'
+      ? bigMacLandShape.sideCenter
+      : bigMacLandShape.center
+    const leftAngle = bigMacLandShape.kind === 'arc-band-slice'
+      ? bigMacLandShape.leftAngleDeg
+      : bigMacLandShape.startAngleDeg
+    const rightAngle = bigMacLandShape.kind === 'arc-band-slice'
+      ? bigMacLandShape.rightAngleDeg
+      : bigMacLandShape.endAngleDeg
+
+    const rayRadius = FIELD_SIZE * 2
+    const leftRay = pointOnCircle(center, rayRadius, leftAngle)
+    const rightRay = pointOnCircle(center, rayRadius, rightAngle)
+
+    return {
+      sourcePath: sectorPath(outfieldBlueShape),
+      clipPath: `M ${center.x} ${center.y} L ${leftRay.x} ${leftRay.y} L ${rightRay.x} ${rightRay.y} Z`,
+    }
+  }, [bigMacLandShape, outfieldBlueShape])
+
+  const bigMacArchesMark = useMemo(
+    () => (bigMacLandShape ? goldenArchesMark(bigMacLandShape) : null),
+    [bigMacLandShape],
+  )
 
   const totalScore = useMemo(() => throws.reduce((sum, result) => sum + result.score, 0), [throws])
 
@@ -670,6 +877,10 @@ function DartDemoPage() {
               aria-label="Hit zone overlay"
             >
               {shownZones.map((zone: BaseballZone) => {
+                if (zone.id === 'outfield-big-mac-land') {
+                  return null
+                }
+
                 if (zone.shape.kind === 'circle') {
                   return (
                     <circle
@@ -696,6 +907,44 @@ function DartDemoPage() {
                   />
                 )
               })}
+
+              {bigMacBlueOverlay ? (
+                <>
+                  <defs>
+                    <clipPath id="big-mac-blue-clip">
+                      <path d={bigMacBlueOverlay.clipPath} />
+                    </clipPath>
+                  </defs>
+                  <path
+                    className="zone-overlay-shape"
+                    d={bigMacBlueOverlay.sourcePath}
+                    clipPath="url(#big-mac-blue-clip)"
+                    fill="#F30D0D"
+                    stroke="#F30D0D"
+                    strokeWidth={1.6}
+                  />
+                </>
+              ) : null}
+
+              {bigMacArchesMark ? (
+                <>
+                  <path
+                    d={bigMacArchesMark.d}
+                    transform={bigMacArchesMark.transform}
+                    fill="#7A1A09"
+                    stroke="#7A1A09"
+                    strokeWidth={1.5}
+                    opacity={0.28}
+                  />
+                  <path
+                    d={bigMacArchesMark.d}
+                    transform={bigMacArchesMark.transform}
+                    fill="#F4D000"
+                    stroke="#E9C700"
+                    strokeWidth={2}
+                  />
+                </>
+              ) : null}
             </svg>
 
             {primaryAim ? (
