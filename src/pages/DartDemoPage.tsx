@@ -51,6 +51,7 @@ type PlayOutcome =
   | 'strike'
   | 'out'
   | 'double-play-out'
+  | 'triple-play-out'
   | 'sac-bunt'
   | 'sac-fly'
 
@@ -622,6 +623,10 @@ function hasAnyRunner(runners: BaseRunnerState): boolean {
   return runners.first || runners.second || runners.third
 }
 
+function runnerCount(runners: BaseRunnerState): number {
+  return Number(runners.first) + Number(runners.second) + Number(runners.third)
+}
+
 function classifyPlay(zoneId: string | null, onTargetField: boolean): PlayOutcome {
   if (!zoneId) {
     return onTargetField ? 'strike' : 'out'
@@ -811,21 +816,41 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
       call = `Strike ${nextStrikes}`
     }
   } else if (outcome === 'sac-bunt') {
-    const moved = advanceRunnersOnly(nextRunners, 1)
-    nextRunners = moved.runners
-    runsScored = moved.runs
-    nextOuts += 1
+    const hadRunners = hasAnyRunner(nextRunners)
+    const resultingOuts = nextOuts + 1
+    if (resultingOuts >= 3) {
+      nextOuts = resultingOuts
+      runsScored = 0
+      call = hadRunners ? 'Sacrifice bunt, third out no run' : 'Out'
+    } else {
+      const moved = advanceRunnersOnly(nextRunners, 1)
+      nextRunners = moved.runners
+      runsScored = moved.runs
+      nextOuts = resultingOuts
+      call = hadRunners
+        ? `Sacrifice bunt${runsScored > 0 ? `, ${runsScored} run scored` : ''}`
+        : 'Out'
+    }
     nextBalls = 0
     nextStrikes = 0
-    call = `Sacrifice bunt${runsScored > 0 ? `, ${runsScored} run scored` : ''}`
   } else if (outcome === 'sac-fly') {
-    const moved = advanceRunnersOnly(nextRunners, 1)
-    nextRunners = moved.runners
-    runsScored = moved.runs
-    nextOuts += 1
+    const hadRunners = hasAnyRunner(nextRunners)
+    const resultingOuts = nextOuts + 1
+    if (resultingOuts >= 3) {
+      nextOuts = resultingOuts
+      runsScored = 0
+      call = hadRunners ? 'Sacrifice fly, third out no run' : 'Out'
+    } else {
+      const moved = advanceRunnersOnly(nextRunners, 1)
+      nextRunners = moved.runners
+      runsScored = moved.runs
+      nextOuts = resultingOuts
+      call = hadRunners
+        ? `Sacrifice fly${runsScored > 0 ? `, ${runsScored} run scored` : ''}`
+        : 'Out'
+    }
     nextBalls = 0
     nextStrikes = 0
-    call = `Sacrifice fly${runsScored > 0 ? `, ${runsScored} run scored` : ''}`
   } else if (outcome === 'double-play-out') {
     if (hasAnyRunner(nextRunners)) {
       nextRunners = applyDoublePlayRunners(nextRunners)
@@ -837,6 +862,11 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
     }
     nextBalls = 0
     nextStrikes = 0
+  } else if (outcome === 'triple-play-out') {
+    nextOuts += 3
+    nextBalls = 0
+    nextStrikes = 0
+    call = 'Triple play'
   } else {
     nextOuts += 1
     nextBalls = 0
@@ -886,6 +916,7 @@ function DartDemoPage() {
   const [status, setStatus] = useState('Step 1: Click a primary aim point in the target field.')
   const [throws, setThrows] = useState<ThrowResult[]>([])
   const [pullQualityLabel, setPullQualityLabel] = useState('')
+  const [clickToThrowMode, setClickToThrowMode] = useState(false)
   const [gameState, setGameState] = useState<GameState>({
     inning: 1,
     balls: 0,
@@ -979,6 +1010,48 @@ function DartDemoPage() {
       y: clampToField ? clamp(y, 0, FIELD_SIZE) : y,
       t: performance.now(),
     }
+  }
+
+  function finalizeThrow(rawImpact: Point, impact: Point, qualitySummary: string): void {
+    const onTargetField = rawImpact.x >= 0
+      && rawImpact.x <= FIELD_SIZE
+      && rawImpact.y >= 0
+      && rawImpact.y <= FIELD_SIZE
+
+    const hit = resolveBaseballZoneHit(rawImpact, DART_RADIUS_UNITS)
+    const target = hit.zone?.id ?? 'miss'
+    const nearest = hit.nearest.id
+    const isThirdBaseTriplePlay = hit.zone?.id === 'third-base-zone-white'
+      && gameState.outs === 0
+      && runnerCount(gameState.baseRunners) >= 2
+    const outcome = isThirdBaseTriplePlay
+      ? 'triple-play-out'
+      : classifyPlay(hit.zone?.id ?? null, onTargetField)
+    const resolution = resolvePlay(gameState, outcome)
+
+    setGameState(resolution.nextState)
+
+    throwSerialRef.current += 1
+
+    const result: ThrowResult = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      serial: throwSerialRef.current,
+      target,
+      nearest,
+      impact,
+      call: resolution.call,
+      runsScored: resolution.runsScored,
+      inning: resolution.nextState.inning,
+      balls: resolution.nextState.balls,
+      strikes: resolution.nextState.strikes,
+      outs: resolution.nextState.outs,
+    }
+
+    setThrows((prev) => [result, ...prev].slice(0, 12))
+    setStatus(
+      `${resolution.call} Zone: ${target === 'miss' ? `miss (${nearest} nearest)` : target}. Count ${resolution.nextState.balls}-${resolution.nextState.strikes}, outs ${resolution.nextState.outs}, inning ${resolution.nextState.inning}.`,
+    )
+    setPullQualityLabel(qualitySummary)
   }
 
   function registerThrow(releasePoint: GesturePoint): void {
@@ -1137,40 +1210,6 @@ function DartDemoPage() {
       y: clamp(rawImpact.y, 0, FIELD_SIZE),
     }
 
-    const onTargetField = rawImpact.x >= 0
-      && rawImpact.x <= FIELD_SIZE
-      && rawImpact.y >= 0
-      && rawImpact.y <= FIELD_SIZE
-
-    const hit = resolveBaseballZoneHit(rawImpact, DART_RADIUS_UNITS)
-    const target = hit.zone?.id ?? 'miss'
-    const nearest = hit.nearest.id
-    const outcome = classifyPlay(hit.zone?.id ?? null, onTargetField)
-    const resolution = resolvePlay(gameState, outcome)
-
-    setGameState(resolution.nextState)
-
-    throwSerialRef.current += 1
-
-    const result: ThrowResult = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      serial: throwSerialRef.current,
-      target,
-      nearest,
-      impact,
-      call: resolution.call,
-      runsScored: resolution.runsScored,
-      inning: resolution.nextState.inning,
-      balls: resolution.nextState.balls,
-      strikes: resolution.nextState.strikes,
-      outs: resolution.nextState.outs,
-    }
-
-    setThrows((prev) => [result, ...prev].slice(0, 12))
-    setStatus(
-      `${resolution.call} Zone: ${target === 'miss' ? `miss (${nearest} nearest)` : target}. Count ${resolution.nextState.balls}-${resolution.nextState.strikes}, outs ${resolution.nextState.outs}, inning ${resolution.nextState.inning}.`,
-    )
-
     const qualityText =
       pullQuality > 0.82
         ? 'smooth'
@@ -1178,7 +1217,9 @@ function DartDemoPage() {
           ? 'okay'
           : 'jerky'
 
-    setPullQualityLabel(
+    finalizeThrow(
+      rawImpact,
+      impact,
       `Pull: ${qualityText} (straight ${pullStraightness.toFixed(2)}). Flick speed: raw ${flickSpeed.toFixed(2)} px/ms (norm ${normalizedSpeed.toFixed(2)}, control ${flickControlFactor.toFixed(2)}, straight ${flickStraightness.toFixed(2)}). Pullback: ${Math.round(pullback)}px.`,
     )
   }
@@ -1241,9 +1282,17 @@ function DartDemoPage() {
 
   function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
     event.preventDefault()
+    const point = pointerToField(event.clientX, event.clientY, true)
+
+    if (clickToThrowMode) {
+      setPrimaryAim({ x: point.x, y: point.y })
+      setAimZoneLabel('Click-to-throw test mode: throw resolved at selected point.')
+      finalizeThrow(point, point, 'Click-to-throw test mode: direct aim throw.')
+      return
+    }
+
     activePointerIdRef.current = event.pointerId
     event.currentTarget.setPointerCapture(event.pointerId)
-    const point = pointerToField(event.clientX, event.clientY, true)
     const centerHit = resolveBaseballZoneHit(point)
     const centerTarget = centerHit.zone?.id ?? `miss (${centerHit.nearest.id} nearest)`
     const scoringHit = resolveBaseballZoneHit(point, DART_RADIUS_UNITS)
@@ -1519,6 +1568,18 @@ function DartDemoPage() {
 
         <p className="status-text">{status}</p>
         {pullQualityLabel ? <p className="saved-data">{pullQualityLabel}</p> : null}
+
+        <div className="runner-controls" aria-label="Throw mode controls">
+          <span className="runner-controls-label">Throw mode:</span>
+          <label>
+            <input
+              type="checkbox"
+              checked={clickToThrowMode}
+              onChange={(event) => setClickToThrowMode(event.target.checked)}
+            />
+            Click-to-throw test mode
+          </label>
+        </div>
 
         <div className="runner-controls" aria-label="Base runner state">
           <span className="runner-controls-label">Count:</span>

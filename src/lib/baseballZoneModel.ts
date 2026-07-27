@@ -916,7 +916,7 @@ export const BASEBALL_ZONES: BaseballZone[] = [
   {
     id: 'outfield-left-foul-pole',
     score: 1,
-    priority: 15,
+    priority: 27,
     color: ZONE_YELLOW,
     shape: {
       kind: 'arc-band-slice',
@@ -931,7 +931,7 @@ export const BASEBALL_ZONES: BaseballZone[] = [
   {
     id: 'outfield-right-foul-pole',
     score: 1,
-    priority: 15,
+    priority: 27,
     color: ZONE_YELLOW,
     shape: {
       kind: 'arc-band-slice',
