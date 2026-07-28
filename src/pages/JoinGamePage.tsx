@@ -24,7 +24,7 @@ function JoinGamePage() {
     const normalizedRoom = roomCode.trim().toUpperCase()
     saveProfile({ name: normalizedName, updatedAt: new Date().toISOString() })
 
-    navigate(`/game?room=${encodeURIComponent(normalizedRoom)}&name=${encodeURIComponent(normalizedName)}&role=guest`)
+    navigate(`/demo?room=${encodeURIComponent(normalizedRoom)}&name=${encodeURIComponent(normalizedName)}&role=guest`)
   }
 
   return (

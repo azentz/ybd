@@ -42,7 +42,7 @@ function HostLobbyPage() {
       return
     }
 
-    navigate(`/game?room=${encodeURIComponent(roomCode)}&name=${encodeURIComponent(hostName.trim())}&role=host`)
+    navigate(`/demo?room=${encodeURIComponent(roomCode)}&name=${encodeURIComponent(hostName.trim())}&role=host`)
   }
 
   return (

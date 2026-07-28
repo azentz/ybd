@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent as ReactDragEvent, PointerEvent as ReactPointerEvent } from 'react'
+import type { FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import baseballFieldReference from '../assets/baseball-field-reference-02.svg'
 import { createDartballRealtimeBridge, type DartballRealtimeBridge } from '../lib/dartballRealtimeBridge'
+import { realtimeClient, type ChatMessage, type Participant } from '../lib/realtime'
 import {
   BASEBALL_ZONES,
   PITCHER_CENTER,
@@ -1255,6 +1257,11 @@ function DartDemoPage() {
   const [gameState, setGameState] = useState<GameState>(initialGameState)
   const [gameStats, setGameStats] = useState<GameStats>(initialGameStats)
   const [throwHistory, setThrowHistory] = useState<ThrowHistoryState>({ entries: [], cursor: -1 })
+  const [participants, setParticipants] = useState<Participant[]>([])
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+  const [chatInput, setChatInput] = useState('')
+  const [connectionStatus, setConnectionStatus] = useState('Not connected')
+  const [connectionError, setConnectionError] = useState('')
   const gameStateRef = useRef<GameState>(gameState)
   const gameStatsRef = useRef<GameStats>(gameStats)
   const throwsRef = useRef<ThrowResult[]>(throws)
@@ -1381,6 +1388,13 @@ function DartDemoPage() {
   const controlledTeam = roleParam === 'host' ? 'home' : roleParam === 'guest' ? 'away' : null
   const isMyTurn = !hasRealtimeBridgeParams
     || (controlledTeam !== null && gameState.battingTeam === controlledTeam)
+  const hostParticipantName = participants.find((participant) => participant.isHost)?.name
+  const awayParticipantName = participants.find((participant) => !participant.isHost)?.name
+  const homePlayerName = hostParticipantName
+    ?? (roleParam === 'host' ? (nameParam?.trim() || 'Host') : 'Host')
+  const awayPlayerName = awayParticipantName
+    ?? (roleParam === 'guest' ? (nameParam?.trim() || 'Guest') : 'Guest')
+  const battingPlayerName = gameState.battingTeam === 'away' ? awayPlayerName : homePlayerName
 
   useEffect(() => {
     if (!hasRealtimeBridgeParams || isMyTurn) {
@@ -1426,6 +1440,41 @@ function DartDemoPage() {
     pullQualityLabelRef.current = pullQualityLabel
   }, [pullQualityLabel])
 
+  useEffect(() => {
+    if (!hasRealtimeBridgeParams) {
+      setParticipants([])
+      setChatMessages([])
+      setConnectionStatus('Not connected')
+      setConnectionError('')
+      return
+    }
+
+    const unsubscribe = realtimeClient.subscribe((event) => {
+      if (event.type === 'status') {
+        setConnectionStatus(event.value)
+        return
+      }
+
+      if (event.type === 'participants') {
+        setParticipants(event.value)
+        return
+      }
+
+      if (event.type === 'chat') {
+        setChatMessages((prev) => [...prev.slice(-99), event.value])
+        return
+      }
+
+      if (event.type === 'error') {
+        setConnectionError(event.value)
+      }
+    })
+
+    return () => {
+      unsubscribe()
+    }
+  }, [hasRealtimeBridgeParams])
+
   function emitCommandBusEvent(event: CommandBusOutboundEvent): void {
     setNetworkDebug((prev) => ({
       ...prev,
@@ -1437,6 +1486,22 @@ function DartDemoPage() {
     for (const listener of busListenersRef.current) {
       listener(event)
     }
+  }
+
+  function handleSendChat(event: FormEvent<HTMLFormElement>): void {
+    event.preventDefault()
+
+    if (!chatInput.trim()) {
+      return
+    }
+
+    realtimeClient.sendChat(chatInput)
+    setChatInput('')
+  }
+
+  function handleReconnect(): void {
+    setConnectionError('')
+    realtimeClient.retryConnection()
   }
 
   function clearLastThrowBannerTimer(): void {
@@ -1631,6 +1696,8 @@ function DartDemoPage() {
       lastRealtimeStatus: hasRealtimeBridgeParams ? 'waiting to connect...' : 'missing role/room/name params',
       lastRealtimeError: '',
     }))
+    setConnectionStatus(hasRealtimeBridgeParams ? 'Connecting...' : 'Not connected')
+    setConnectionError('')
 
     if (!hasRealtimeBridgeParams) {
       return
@@ -1645,12 +1712,14 @@ function DartDemoPage() {
           room: roomParam as string,
           name: nameParam as string,
           onStatus: (message) => {
+            setConnectionStatus(message)
             setNetworkDebug((prev) => ({
               ...prev,
               lastRealtimeStatus: message,
             }))
           },
           onError: (message) => {
+            setConnectionError(message)
             setNetworkDebug((prev) => ({
               ...prev,
               lastRealtimeError: message,
@@ -2524,7 +2593,7 @@ function DartDemoPage() {
 
               <div className="field-stats-panel" aria-label="Live baseball stats">
                 <div className={`field-stats-title batting-team-${gameState.battingTeam}`}>
-                  {gameState.battingTeam.toUpperCase()} batting
+                  {gameState.battingTeam.toUpperCase()} batting - {battingPlayerName}
                 </div>
                 <div className="field-stats-grid">
                   <span>AVG</span>
@@ -2552,7 +2621,7 @@ function DartDemoPage() {
                 <div
                   className={`score-cell score-team score-team-away ${gameState.battingTeam === 'away' ? 'is-active-batting' : ''}`}
                 >
-                  AWAY{gameState.battingTeam === 'away' ? ' *' : ''}{hasRealtimeBridgeParams && controlledTeam === 'away' ? ' (YOU)' : ''}
+                  AWAY{gameState.battingTeam === 'away' ? ' *' : ''} - {awayPlayerName}
                 </div>
                 {scoreboardInnings.map((entry) => (
                   <div key={`away-${entry.inning}`} className={`score-cell ${entry.isCurrent ? 'is-current-inning' : ''}`}>
@@ -2564,7 +2633,7 @@ function DartDemoPage() {
                 <div
                   className={`score-cell score-team score-team-home ${gameState.battingTeam === 'home' ? 'is-active-batting' : ''}`}
                 >
-                  HOME{gameState.battingTeam === 'home' ? ' *' : ''}{hasRealtimeBridgeParams && controlledTeam === 'home' ? ' (YOU)' : ''}
+                  HOME{gameState.battingTeam === 'home' ? ' *' : ''} - {homePlayerName}
                 </div>
                 {scoreboardInnings.map((entry) => (
                   <div key={`home-${entry.inning}`} className={`score-cell ${entry.isCurrent ? 'is-current-inning' : ''}`}>
@@ -2656,6 +2725,48 @@ function DartDemoPage() {
           </div>
         )}
       </section>
+
+      {hasRealtimeBridgeParams ? (
+        <section className="card" aria-labelledby="chat-title">
+          <h2 id="chat-title">Room Chat</h2>
+          <p className="saved-data">Status: {connectionStatus}</p>
+          {connectionError ? <p className="error-text">{connectionError}</p> : null}
+
+          <div className="button-row reconnect-row">
+            <button type="button" className="ghost" onClick={handleReconnect}>
+              {roleParam === 'host' ? 'Rebind Host Room' : 'Reconnect'}
+            </button>
+          </div>
+
+          <div className="chat-box" aria-live="polite">
+            {chatMessages.length === 0 ? (
+              <p className="saved-data">No messages yet.</p>
+            ) : (
+              chatMessages.map((message) => (
+                <p key={message.id} className={message.kind === 'system' ? 'chat-system' : 'chat-user'}>
+                  <strong>{message.sender}:</strong> {message.text}
+                </p>
+              ))
+            )}
+          </div>
+
+          <form className="chat-form" onSubmit={handleSendChat}>
+            <label htmlFor="demo-chat-input">Message</label>
+            <input
+              id="demo-chat-input"
+              value={chatInput}
+              onChange={(event) => setChatInput(event.target.value)}
+              placeholder="Send message to room"
+              maxLength={300}
+            />
+            <div className="button-row">
+              <button type="submit" disabled={!chatInput.trim()}>
+                Send
+              </button>
+            </div>
+          </form>
+        </section>
+      ) : null}
     </main>
   )
 }
