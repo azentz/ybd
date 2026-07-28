@@ -282,6 +282,30 @@ th {
   font-size: 0.95rem;
 }
 
+.debug-panel {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(109, 123, 138, 0.4);
+  background: rgba(239, 245, 250, 0.7);
+  color: #203141;
+  font-size: 0.72rem;
+  line-height: 1.25;
+  display: grid;
+  gap: 2px;
+}
+
+.debug-panel-title {
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.debug-panel-error {
+  color: #872f25;
+  font-weight: 700;
+}
+
 .runner-controls-label {
   font-weight: 700;
 }
@@ -533,6 +557,7 @@ th {
   white-space: nowrap;
 }
 
+
 .field-stats-panel {
   position: absolute;
   right: 14px;
@@ -542,11 +567,11 @@ th {
   pointer-events: none;
   background: rgba(21, 26, 31, 0.83);
   border: 1px solid rgba(228, 236, 242, 0.34);
-  border-radius: 10px;
-  padding: 8px 10px;
+  border-radius: 9px;
+  padding: 6px 7px;
   display: grid;
-  gap: 7px;
-  min-width: 160px;
+  gap: 5px;
+  min-width: 118px;
   color: #eef4f9;
 }
 
@@ -561,7 +586,7 @@ th {
 .field-stats-grid {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 5px 14px;
+  gap: 4px 6px;
   font-size: 0.73rem;
 }
 
@@ -709,8 +734,8 @@ th {
 
   .field-stats-panel {
     right: 10px;
-    min-width: 148px;
-    padding: 7px 8px;
+    min-width: 112px;
+    padding: 6px 6px;
   }
 
   .field-last-throw-banner {
@@ -721,7 +746,7 @@ th {
 
   .field-stats-grid {
     font-size: 0.68rem;
-    gap: 4px 12px;
+    gap: 3px 6px;
   }
 
   .field-stats-grid strong {

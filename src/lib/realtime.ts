@@ -18,16 +18,24 @@ export type ChatMessage = {
   kind: 'user' | 'system'
 }
 
+export type RealtimeGameMessage = {
+  channel: string
+  payload: unknown
+  senderClientId: string | null
+}
+
 type WireMessage =
   | { type: 'join'; clientId: string; name: string }
   | { type: 'chat'; id: string; sender: string; text: string; timestamp: number }
   | { type: 'participants'; participants: Participant[] }
   | { type: 'system'; id: string; text: string; timestamp: number }
+  | { type: 'game'; channel: string; payload: unknown; senderClientId?: string | null }
 
-type RealtimeEvent =
+export type RealtimeEvent =
   | { type: 'status'; value: string }
   | { type: 'participants'; value: Participant[] }
   | { type: 'chat'; value: ChatMessage }
+  | { type: 'game'; value: RealtimeGameMessage }
   | { type: 'error'; value: string }
 
 type Listener = (event: RealtimeEvent) => void
@@ -280,6 +288,44 @@ class RealtimeClient {
         sender: message.sender,
         text: message.text,
         timestamp: message.timestamp,
+      })
+      return
+    }
+
+    this.emit({ type: 'error', value: 'Not connected to host yet. Please wait or reconnect.' })
+  }
+
+  sendGameMessage(channel: string, payload: unknown): void {
+    const normalizedChannel = channel.trim()
+    if (!normalizedChannel || !this.role) {
+      return
+    }
+
+    if (this.role === 'host') {
+      const wirePayload: WireMessage = {
+        type: 'game',
+        channel: normalizedChannel,
+        payload,
+        senderClientId: 'host',
+      }
+
+      this.emit({
+        type: 'game',
+        value: {
+          channel: normalizedChannel,
+          payload,
+          senderClientId: 'host',
+        },
+      })
+      this.broadcastWire(wirePayload)
+      return
+    }
+
+    if (this.hostConnection?.open) {
+      this.sendWire(this.hostConnection, {
+        type: 'game',
+        channel: normalizedChannel,
+        payload,
       })
       return
     }
@@ -584,6 +630,27 @@ class RealtimeClient {
 
       this.emit({ type: 'chat', value: message })
       this.broadcastWire(payload)
+      return
+    }
+
+    if (payload.type === 'game') {
+      const senderClientId = this.peerIdToClientId.get(conn.peer) ?? null
+      const forwardedPayload: WireMessage = {
+        type: 'game',
+        channel: payload.channel,
+        payload: payload.payload,
+        senderClientId,
+      }
+
+      this.emit({
+        type: 'game',
+        value: {
+          channel: payload.channel,
+          payload: payload.payload,
+          senderClientId,
+        },
+      })
+      this.broadcastWire(forwardedPayload)
     }
   }
 
@@ -620,6 +687,18 @@ class RealtimeClient {
           text: payload.text,
           timestamp: payload.timestamp,
           kind: 'system',
+        },
+      })
+      return
+    }
+
+    if (payload.type === 'game') {
+      this.emit({
+        type: 'game',
+        value: {
+          channel: payload.channel,
+          payload: payload.payload,
+          senderClientId: payload.senderClientId ?? null,
         },
       })
     }
@@ -1053,7 +1132,8 @@ class RealtimeClient {
       maybe.type === 'join' ||
       maybe.type === 'chat' ||
       maybe.type === 'participants' ||
-      maybe.type === 'system'
+      maybe.type === 'system' ||
+      maybe.type === 'game'
     )
   }
 }

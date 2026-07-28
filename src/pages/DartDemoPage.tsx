@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent as ReactDragEvent, PointerEvent as ReactPointerEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import baseballFieldReference from '../assets/baseball-field-reference-02.svg'
+import { createDartballRealtimeBridge, type DartballRealtimeBridge } from '../lib/dartballRealtimeBridge'
 import {
   BASEBALL_ZONES,
   PITCHER_CENTER,
@@ -26,6 +27,73 @@ type ThrowResult = {
   balls: number
   strikes: number
   outs: number
+}
+
+type ThrowCommand = {
+  commandId: string
+  source: 'local' | 'client'
+  clientId: string | null
+  createdAt: number
+  rawImpact: Point
+  impact: Point
+  qualitySummary: string
+}
+
+type ReplayState = {
+  gameState: GameState
+  gameStats: GameStats
+  throws: ThrowResult[]
+  fieldThrows: ThrowResult[]
+  fieldThrowTurnKey: string | null
+  lastThrowBanner: string | null
+  followUpBanner: string | null
+  status: string
+  pullQualityLabel: string
+  throwSerial: number
+  clearFieldThrowsBeforeNextPitch: boolean
+}
+
+type ThrowHistoryEntry = {
+  command: ThrowCommand
+  before: ReplayState
+  after: ReplayState
+}
+
+type ThrowHistoryState = {
+  entries: ThrowHistoryEntry[]
+  cursor: number
+}
+
+type CommandBusMode = 'host' | 'client'
+
+type CommandBusOutboundEvent =
+  | { type: 'throw-command'; command: ThrowCommand }
+  | { type: 'undo-request' }
+  | { type: 'redo-request' }
+  | { type: 'state-updated'; snapshot: ReplayState; history: ThrowHistoryState }
+
+type ThrowCommandBus = {
+  setMode: (mode: CommandBusMode) => void
+  getMode: () => CommandBusMode
+  submitThrowCommand: (command: ThrowCommand) => void
+  requestUndo: () => void
+  requestRedo: () => void
+  applyHostSnapshot: (snapshot: ReplayState, history: ThrowHistoryState) => void
+  subscribe: (listener: (event: CommandBusOutboundEvent) => void) => () => void
+}
+
+type NetworkDebugState = {
+  bridgeEnabled: boolean
+  bridgeConnected: boolean
+  role: string
+  room: string
+  name: string
+  busMode: CommandBusMode
+  lastRealtimeStatus: string
+  lastRealtimeError: string
+  lastBusEvent: string
+  outboundBusEvents: number
+  inboundSnapshots: number
 }
 
 type BaseRunnerState = {
@@ -86,6 +154,12 @@ type GameStats = {
 
 type GesturePoint = Point & { t: number }
 
+declare global {
+  interface Window {
+    dartballCommandBus?: ThrowCommandBus
+  }
+}
+
 const FIELD_SIZE = 1000
 const DART_RADIUS_UNITS = 11
 const DART_OUTLINE_WIDTH = 2
@@ -99,6 +173,7 @@ const TRUE_FORWARD_START_PIXELS = 8
 const MIN_FLICK_SPEED = 0.12
 const MAX_FLICK_SPEED = 2.2
 const MIN_CONTROL_FACTOR = 0.25
+const THROW_BANNER_DURATION_MS = 1600
 const TAU = Math.PI * 2
 const OUTER_ARC_BULGE = 0
 const BASE_RUNNER_SCALE = 1.15
@@ -660,6 +735,68 @@ function initialGameStats(): GameStats {
   }
 }
 
+function cloneThrowResult(result: ThrowResult): ThrowResult {
+  return {
+    ...result,
+    impact: { ...result.impact },
+  }
+}
+
+function cloneThrowCommand(command: ThrowCommand): ThrowCommand {
+  return {
+    ...command,
+    rawImpact: { ...command.rawImpact },
+    impact: { ...command.impact },
+  }
+}
+
+function cloneThrowList(throwList: ThrowResult[]): ThrowResult[] {
+  return throwList.map(cloneThrowResult)
+}
+
+function cloneGameState(state: GameState): GameState {
+  return {
+    ...state,
+    awayInningScores: [...state.awayInningScores],
+    homeInningScores: [...state.homeInningScores],
+    baseRunners: { ...state.baseRunners },
+  }
+}
+
+function cloneGameStats(stats: GameStats): GameStats {
+  return {
+    away: { ...stats.away },
+    home: { ...stats.home },
+  }
+}
+
+function snapshotReplayState(input: ReplayState): ReplayState {
+  return {
+    gameState: cloneGameState(input.gameState),
+    gameStats: cloneGameStats(input.gameStats),
+    throws: cloneThrowList(input.throws),
+    fieldThrows: cloneThrowList(input.fieldThrows),
+    fieldThrowTurnKey: input.fieldThrowTurnKey,
+    lastThrowBanner: input.lastThrowBanner,
+    followUpBanner: input.followUpBanner,
+    status: input.status,
+    pullQualityLabel: input.pullQualityLabel,
+    throwSerial: input.throwSerial,
+    clearFieldThrowsBeforeNextPitch: input.clearFieldThrowsBeforeNextPitch,
+  }
+}
+
+function cloneThrowHistoryState(history: ThrowHistoryState): ThrowHistoryState {
+  return {
+    cursor: history.cursor,
+    entries: history.entries.map((entry) => ({
+      command: cloneThrowCommand(entry.command),
+      before: snapshotReplayState(entry.before),
+      after: snapshotReplayState(entry.after),
+    })),
+  }
+}
+
 function initialGameState(): GameState {
   return {
     inning: 1,
@@ -814,6 +951,19 @@ function addRunsToInning(inningScores: number[], inning: number, runs: number): 
 
 function inningLabel(inning: number, half: 'top' | 'bottom'): string {
   return `${half === 'top' ? 'Top' : 'Bottom'} ${inning}`
+}
+
+function fieldThrowTurnKey(battingTeam: 'away' | 'home', inningLabelText: string): string {
+  return `${battingTeam}:${inningLabelText}`
+}
+
+function resolveFieldThrowTurnKeyFromThrows(fieldThrowList: ThrowResult[]): string | null {
+  if (fieldThrowList.length === 0) {
+    return null
+  }
+
+  const first = fieldThrowList[0]
+  return fieldThrowTurnKey(first.battingTeam, first.inningLabel)
 }
 
 function isHitOutcome(outcome: PlayOutcome): boolean {
@@ -1080,17 +1230,22 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
 }
 
 function DartDemoPage() {
+  const [searchParams] = useSearchParams()
   const fieldRef = useRef<HTMLDivElement | null>(null)
   const throwSerialRef = useRef(0)
   const activePointerIdRef = useRef<number | null>(null)
   const clearFieldThrowsBeforeNextPitchRef = useRef(false)
   const lastThrowBannerTimeoutRef = useRef<number | null>(null)
+  const realtimeBridgeRef = useRef<DartballRealtimeBridge | null>(null)
+  const submitThrowCommandRef = useRef<(command: ThrowCommand) => void>(() => {})
+  const handleUndoRef = useRef<() => void>(() => {})
+  const handleRedoRef = useRef<() => void>(() => {})
+  const applyHostSnapshotRef = useRef<(snapshot: ReplayState, history: ThrowHistoryState) => void>(() => {})
 
   const [dragPoint, setDragPoint] = useState<Point | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [showReference, setShowReference] = useState(false)
   const [primaryAim, setPrimaryAim] = useState<Point | null>(null)
-  const [aimZoneLabel, setAimZoneLabel] = useState('')
   const [status, setStatus] = useState('Step 1: Click a primary aim point in the target field.')
   const [throws, setThrows] = useState<ThrowResult[]>([])
   const [fieldThrows, setFieldThrows] = useState<ThrowResult[]>([])
@@ -1099,6 +1254,32 @@ function DartDemoPage() {
   const [clickToThrowMode, setClickToThrowMode] = useState(false)
   const [gameState, setGameState] = useState<GameState>(initialGameState)
   const [gameStats, setGameStats] = useState<GameStats>(initialGameStats)
+  const [throwHistory, setThrowHistory] = useState<ThrowHistoryState>({ entries: [], cursor: -1 })
+  const gameStateRef = useRef<GameState>(gameState)
+  const gameStatsRef = useRef<GameStats>(gameStats)
+  const throwsRef = useRef<ThrowResult[]>(throws)
+  const fieldThrowsRef = useRef<ThrowResult[]>(fieldThrows)
+  const fieldThrowTurnKeyRef = useRef<string | null>(null)
+  const lastThrowBannerRef = useRef<string | null>(lastThrowBanner)
+  const followUpBannerRef = useRef<string | null>(null)
+  const throwHistoryRef = useRef<ThrowHistoryState>(throwHistory)
+  const statusRef = useRef<string>(status)
+  const pullQualityLabelRef = useRef<string>(pullQualityLabel)
+  const [networkDebug, setNetworkDebug] = useState<NetworkDebugState>({
+    bridgeEnabled: false,
+    bridgeConnected: false,
+    role: 'n/a',
+    room: 'n/a',
+    name: 'n/a',
+    busMode: 'host',
+    lastRealtimeStatus: 'idle',
+    lastRealtimeError: '',
+    lastBusEvent: 'none',
+    outboundBusEvents: 0,
+    inboundSnapshots: 0,
+  })
+  const commandBusModeRef = useRef<CommandBusMode>('host')
+  const busListenersRef = useRef<Array<(event: CommandBusOutboundEvent) => void>>([])
   const gesturePathRef = useRef<GesturePoint[]>([])
 
   const orderedZones = useMemo(
@@ -1188,14 +1369,333 @@ function DartDemoPage() {
   const onBasePct = formatThreeDecimalStat(obpValue)
   const sluggingPct = formatThreeDecimalStat(slgValue)
   const ops = formatThreeDecimalStat(obpValue + slgValue)
+  const canUndo = throwHistory.cursor >= 0
+  const canRedo = throwHistory.cursor < throwHistory.entries.length - 1
+  const roleParam = searchParams.get('role')
+  const roomParam = searchParams.get('room')
+  const nameParam = searchParams.get('name')
+  const hasRealtimeBridgeParams =
+    !!roomParam?.trim()
+    && !!nameParam?.trim()
+    && (roleParam === 'host' || roleParam === 'guest')
+  const controlledTeam = roleParam === 'host' ? 'home' : roleParam === 'guest' ? 'away' : null
+  const isMyTurn = !hasRealtimeBridgeParams
+    || (controlledTeam !== null && gameState.battingTeam === controlledTeam)
 
   useEffect(() => {
+    if (!hasRealtimeBridgeParams || isMyTurn) {
+      return
+    }
+
+    activePointerIdRef.current = null
+    gesturePathRef.current = []
+    setIsDragging(false)
+    setDragPoint(null)
+    setPrimaryAim(null)
+  }, [hasRealtimeBridgeParams, isMyTurn])
+
+  useEffect(() => {
+    gameStateRef.current = gameState
+  }, [gameState])
+
+  useEffect(() => {
+    gameStatsRef.current = gameStats
+  }, [gameStats])
+
+  useEffect(() => {
+    throwsRef.current = throws
+  }, [throws])
+
+  useEffect(() => {
+    fieldThrowsRef.current = fieldThrows
+  }, [fieldThrows])
+
+  useEffect(() => {
+    lastThrowBannerRef.current = lastThrowBanner
+  }, [lastThrowBanner])
+
+  useEffect(() => {
+    throwHistoryRef.current = throwHistory
+  }, [throwHistory])
+
+  useEffect(() => {
+    statusRef.current = status
+  }, [status])
+
+  useEffect(() => {
+    pullQualityLabelRef.current = pullQualityLabel
+  }, [pullQualityLabel])
+
+  function emitCommandBusEvent(event: CommandBusOutboundEvent): void {
+    setNetworkDebug((prev) => ({
+      ...prev,
+      busMode: commandBusModeRef.current,
+      lastBusEvent: `out:${event.type}`,
+      outboundBusEvents: prev.outboundBusEvents + 1,
+    }))
+
+    for (const listener of busListenersRef.current) {
+      listener(event)
+    }
+  }
+
+  function clearLastThrowBannerTimer(): void {
+    if (lastThrowBannerTimeoutRef.current !== null) {
+      window.clearTimeout(lastThrowBannerTimeoutRef.current)
+      lastThrowBannerTimeoutRef.current = null
+    }
+  }
+
+  function showBannerSequence(primaryBanner: string | null, followUpBanner: string | null): void {
+    clearLastThrowBannerTimer()
+
+    lastThrowBannerRef.current = primaryBanner
+    followUpBannerRef.current = followUpBanner
+    setLastThrowBanner(primaryBanner)
+
+    if (!primaryBanner) {
+      return
+    }
+
+    lastThrowBannerTimeoutRef.current = window.setTimeout(() => {
+      if (followUpBanner) {
+        lastThrowBannerRef.current = followUpBanner
+        followUpBannerRef.current = null
+        setLastThrowBanner(followUpBanner)
+
+        lastThrowBannerTimeoutRef.current = window.setTimeout(() => {
+          lastThrowBannerRef.current = null
+          setLastThrowBanner(null)
+          lastThrowBannerTimeoutRef.current = null
+        }, THROW_BANNER_DURATION_MS)
+        return
+      }
+
+      lastThrowBannerRef.current = null
+      setLastThrowBanner(null)
+      lastThrowBannerTimeoutRef.current = null
+    }, THROW_BANNER_DURATION_MS)
+  }
+
+  function applyReplayState(state: ReplayState): void {
+    const nextGameState = cloneGameState(state.gameState)
+    const nextGameStats = cloneGameStats(state.gameStats)
+    const nextThrows = cloneThrowList(state.throws)
+    const nextFieldThrows = cloneThrowList(state.fieldThrows)
+
+    gameStateRef.current = nextGameState
+    gameStatsRef.current = nextGameStats
+    throwsRef.current = nextThrows
+    fieldThrowsRef.current = nextFieldThrows
+    fieldThrowTurnKeyRef.current = state.fieldThrowTurnKey ?? resolveFieldThrowTurnKeyFromThrows(nextFieldThrows)
+    lastThrowBannerRef.current = state.lastThrowBanner
+    followUpBannerRef.current = state.followUpBanner
+    statusRef.current = state.status
+    pullQualityLabelRef.current = state.pullQualityLabel
+
+    setGameState(nextGameState)
+    setGameStats(nextGameStats)
+    setThrows(nextThrows)
+    setFieldThrows(nextFieldThrows)
+    setStatus(state.status)
+    setPullQualityLabel(state.pullQualityLabel)
+    throwSerialRef.current = state.throwSerial
+    clearFieldThrowsBeforeNextPitchRef.current = state.clearFieldThrowsBeforeNextPitch
+
+    showBannerSequence(state.lastThrowBanner, state.followUpBanner)
+  }
+
+  function applyHostSnapshot(snapshot: ReplayState, history: ThrowHistoryState): void {
+    applyReplayState(snapshot)
+    const nextHistory = cloneThrowHistoryState(history)
+    throwHistoryRef.current = nextHistory
+    setThrowHistory(nextHistory)
+    setNetworkDebug((prev) => ({
+      ...prev,
+      busMode: commandBusModeRef.current,
+      lastBusEvent: 'in:state-updated',
+      inboundSnapshots: prev.inboundSnapshots + 1,
+    }))
+  }
+
+  function publishStateUpdated(snapshot: ReplayState, history: ThrowHistoryState): void {
+    emitCommandBusEvent({
+      type: 'state-updated',
+      snapshot: snapshotReplayState(snapshot),
+      history: cloneThrowHistoryState(history),
+    })
+  }
+
+  function handleUndo(): void {
+    if (commandBusModeRef.current === 'client') {
+      emitCommandBusEvent({ type: 'undo-request' })
+      return
+    }
+
+    const currentHistory = throwHistoryRef.current
+    if (currentHistory.cursor < 0) {
+      return
+    }
+
+    const entry = currentHistory.entries[currentHistory.cursor]
+    const nextHistory: ThrowHistoryState = {
+      entries: currentHistory.entries,
+      cursor: currentHistory.cursor - 1,
+    }
+    applyReplayState(entry.before)
+    throwHistoryRef.current = nextHistory
+    setThrowHistory(nextHistory)
+    publishStateUpdated(entry.before, nextHistory)
+  }
+
+  function handleRedo(): void {
+    if (commandBusModeRef.current === 'client') {
+      emitCommandBusEvent({ type: 'redo-request' })
+      return
+    }
+
+    const currentHistory = throwHistoryRef.current
+    if (currentHistory.cursor >= currentHistory.entries.length - 1) {
+      return
+    }
+
+    const entry = currentHistory.entries[currentHistory.cursor + 1]
+    const nextHistory: ThrowHistoryState = {
+      entries: currentHistory.entries,
+      cursor: currentHistory.cursor + 1,
+    }
+    applyReplayState(entry.after)
+    throwHistoryRef.current = nextHistory
+    setThrowHistory(nextHistory)
+    publishStateUpdated(entry.after, nextHistory)
+  }
+
+  submitThrowCommandRef.current = submitThrowCommand
+  handleUndoRef.current = handleUndo
+  handleRedoRef.current = handleRedo
+  applyHostSnapshotRef.current = applyHostSnapshot
+
+  useEffect(() => {
+    const commandBus: ThrowCommandBus = {
+      setMode: (mode) => {
+        commandBusModeRef.current = mode
+      },
+      getMode: () => commandBusModeRef.current,
+      submitThrowCommand: (command) => {
+        if (commandBusModeRef.current === 'client') {
+          emitCommandBusEvent({ type: 'throw-command', command: cloneThrowCommand(command) })
+          return
+        }
+
+        submitThrowCommandRef.current(cloneThrowCommand(command))
+      },
+      requestUndo: () => {
+        handleUndoRef.current()
+      },
+      requestRedo: () => {
+        handleRedoRef.current()
+      },
+      applyHostSnapshot: (snapshot, history) => {
+        applyHostSnapshotRef.current(snapshot, history)
+      },
+      subscribe: (listener) => {
+        busListenersRef.current = [...busListenersRef.current, listener]
+        return () => {
+          busListenersRef.current = busListenersRef.current.filter((candidate) => candidate !== listener)
+        }
+      },
+    }
+
+    window.dartballCommandBus = commandBus
+
     return () => {
       if (lastThrowBannerTimeoutRef.current !== null) {
         window.clearTimeout(lastThrowBannerTimeoutRef.current)
       }
+
+      if (window.dartballCommandBus === commandBus) {
+        delete window.dartballCommandBus
+      }
     }
   }, [])
+
+  useEffect(() => {
+    setNetworkDebug((prev) => ({
+      ...prev,
+      bridgeEnabled: hasRealtimeBridgeParams,
+      role: roleParam ?? 'n/a',
+      room: roomParam ?? 'n/a',
+      name: nameParam ?? 'n/a',
+      busMode: roleParam === 'guest' ? 'client' : 'host',
+      bridgeConnected: false,
+      lastRealtimeStatus: hasRealtimeBridgeParams ? 'waiting to connect...' : 'missing role/room/name params',
+      lastRealtimeError: '',
+    }))
+
+    if (!hasRealtimeBridgeParams) {
+      return
+    }
+
+    let cancelled = false
+
+    void (async () => {
+      try {
+        const bridge = await createDartballRealtimeBridge({
+          role: roleParam as 'host' | 'guest',
+          room: roomParam as string,
+          name: nameParam as string,
+          onStatus: (message) => {
+            setNetworkDebug((prev) => ({
+              ...prev,
+              lastRealtimeStatus: message,
+            }))
+          },
+          onError: (message) => {
+            setNetworkDebug((prev) => ({
+              ...prev,
+              lastRealtimeError: message,
+            }))
+            setStatus((prev) => `${prev} [network: ${message}]`)
+          },
+        })
+
+        if (cancelled) {
+          bridge.dispose()
+          return
+        }
+
+        realtimeBridgeRef.current = bridge
+        setNetworkDebug((prev) => ({
+          ...prev,
+          bridgeConnected: true,
+          busMode: roleParam === 'guest' ? 'client' : 'host',
+          lastRealtimeStatus: `bridge connected (${roleParam})`,
+        }))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown bridge connection error'
+        setNetworkDebug((prev) => ({
+          ...prev,
+          bridgeConnected: false,
+          lastRealtimeError: message,
+          lastRealtimeStatus: 'bridge connection failed',
+        }))
+        setStatus((prev) => `${prev} [network: ${message}]`)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      if (realtimeBridgeRef.current) {
+        realtimeBridgeRef.current.dispose()
+        realtimeBridgeRef.current = null
+      }
+      setNetworkDebug((prev) => ({
+        ...prev,
+        bridgeConnected: false,
+        lastRealtimeStatus: 'bridge disconnected',
+      }))
+    }
+  }, [hasRealtimeBridgeParams, nameParam, roleParam, roomParam])
 
   function pointerToField(clientX: number, clientY: number, clampToField: boolean): GesturePoint {
     const rect = fieldRef.current?.getBoundingClientRect()
@@ -1214,7 +1714,60 @@ function DartDemoPage() {
     }
   }
 
-  function finalizeThrow(rawImpact: Point, impact: Point, qualitySummary: string): void {
+  function createThrowCommand(
+    rawImpact: Point,
+    impact: Point,
+    qualitySummary: string,
+    source: 'local' | 'client' = 'local',
+    clientId: string | null = null,
+  ): ThrowCommand {
+    return {
+      commandId: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      source,
+      clientId,
+      createdAt: Date.now(),
+      rawImpact: { ...rawImpact },
+      impact: { ...impact },
+      qualitySummary,
+    }
+  }
+
+  function submitThrowCommand(command: ThrowCommand): void {
+    if (commandBusModeRef.current === 'client') {
+      emitCommandBusEvent({ type: 'throw-command', command: cloneThrowCommand(command) })
+      return
+    }
+
+    finalizeThrow(cloneThrowCommand(command))
+  }
+
+  function finalizeThrow(command: ThrowCommand): void {
+    const currentGameState = gameStateRef.current
+    const currentGameStats = gameStatsRef.current
+    const currentThrows = throwsRef.current
+    const currentFieldThrows = fieldThrowsRef.current
+    const currentStatus = statusRef.current
+    const currentPullQualityLabel = pullQualityLabelRef.current
+    const currentHistory = throwHistoryRef.current
+
+    const rawImpact = command.rawImpact
+    const impact = command.impact
+    const qualitySummary = command.qualitySummary
+
+    const beforeState = snapshotReplayState({
+      gameState: currentGameState,
+      gameStats: currentGameStats,
+      throws: currentThrows,
+      fieldThrows: currentFieldThrows,
+      fieldThrowTurnKey: fieldThrowTurnKeyRef.current,
+      lastThrowBanner: lastThrowBannerRef.current,
+      followUpBanner: followUpBannerRef.current,
+      status: currentStatus,
+      pullQualityLabel: currentPullQualityLabel,
+      throwSerial: throwSerialRef.current,
+      clearFieldThrowsBeforeNextPitch: clearFieldThrowsBeforeNextPitchRef.current,
+    })
+
     const onTargetField = rawImpact.x >= 0
       && rawImpact.x <= FIELD_SIZE
       && rawImpact.y >= 0
@@ -1224,64 +1777,59 @@ function DartDemoPage() {
     const target = hit.zone?.id ?? 'miss'
     const nearest = hit.nearest.id
     const isThirdBaseTriplePlay = hit.zone?.id === 'third-base-zone-white'
-      && gameState.outs === 0
-      && runnerCount(gameState.baseRunners) >= 2
+      && currentGameState.outs === 0
+      && runnerCount(currentGameState.baseRunners) >= 2
     const outcome = isThirdBaseTriplePlay
       ? 'triple-play-out'
       : classifyPlay(hit.zone?.id ?? null, onTargetField)
-    const hadAnyRunnerAtStart = hasAnyRunner(gameState.baseRunners)
-    const battingTeam = gameState.battingTeam
-    const currentInningLabel = inningLabel(gameState.inning, gameState.half)
-    const resolution = resolvePlay(gameState, outcome)
+    const hadAnyRunnerAtStart = hasAnyRunner(currentGameState.baseRunners)
+    const battingTeam = currentGameState.battingTeam
+    const currentInningLabel = inningLabel(currentGameState.inning, currentGameState.half)
+    const resolution = resolvePlay(currentGameState, outcome)
     const postPlayState = resolution.gameOver ? initialGameState() : resolution.nextState
 
+    const nextGameState = resolution.gameOver ? initialGameState() : resolution.nextState
+
+    let nextGameStats = cloneGameStats(currentGameStats)
     if (resolution.gameOver) {
-      setGameState(initialGameState())
+      nextGameStats = initialGameStats()
     } else {
-      setGameState(resolution.nextState)
+      const teamStats = battingTeam === 'away' ? currentGameStats.away : currentGameStats.home
+      const walkEndedPlateAppearance = resolution.plateAppearanceOver && outcome === 'ball'
+      const isSacrifice = (outcome === 'sac-bunt' || outcome === 'sac-fly') && hadAnyRunnerAtStart
+      const plateAppearanceIncrement = resolution.plateAppearanceOver ? 1 : 0
+      const atBatIncrement = resolution.plateAppearanceOver && !walkEndedPlateAppearance && !isSacrifice ? 1 : 0
+      const totalBasesIncrement = outcome === 'single'
+        ? 1
+        : outcome === 'double'
+          ? 2
+          : outcome === 'triple'
+            ? 3
+            : outcome === 'home-run'
+              ? 4
+              : 0
+
+      const nextTeamStats: TeamStats = {
+        ...teamStats,
+        hits: teamStats.hits + (isHitOutcome(outcome) ? 1 : 0),
+        walks: teamStats.walks + (walkEndedPlateAppearance ? 1 : 0),
+        sacFlies: teamStats.sacFlies + (resolution.plateAppearanceOver && outcome === 'sac-fly' && hadAnyRunnerAtStart ? 1 : 0),
+        plateAppearances: teamStats.plateAppearances + plateAppearanceIncrement,
+        atBats: teamStats.atBats + atBatIncrement,
+        totalBases: teamStats.totalBases + totalBasesIncrement,
+      }
+
+      nextGameStats = {
+        away: battingTeam === 'away' ? nextTeamStats : currentGameStats.away,
+        home: battingTeam === 'home' ? nextTeamStats : currentGameStats.home,
+      }
     }
 
-    if (resolution.gameOver) {
-      setGameStats(initialGameStats())
-    } else {
-      setGameStats((prev) => {
-        const teamStats = battingTeam === 'away' ? prev.away : prev.home
-        const walkEndedPlateAppearance = resolution.plateAppearanceOver && outcome === 'ball'
-        const isSacrifice = (outcome === 'sac-bunt' || outcome === 'sac-fly') && hadAnyRunnerAtStart
-        const plateAppearanceIncrement = resolution.plateAppearanceOver ? 1 : 0
-        const atBatIncrement = resolution.plateAppearanceOver && !walkEndedPlateAppearance && !isSacrifice ? 1 : 0
-        const totalBasesIncrement = outcome === 'single'
-          ? 1
-          : outcome === 'double'
-            ? 2
-            : outcome === 'triple'
-              ? 3
-              : outcome === 'home-run'
-                ? 4
-                : 0
-
-        const nextTeamStats: TeamStats = {
-          ...teamStats,
-          hits: teamStats.hits + (isHitOutcome(outcome) ? 1 : 0),
-          walks: teamStats.walks + (walkEndedPlateAppearance ? 1 : 0),
-          sacFlies: teamStats.sacFlies + (resolution.plateAppearanceOver && outcome === 'sac-fly' && hadAnyRunnerAtStart ? 1 : 0),
-          plateAppearances: teamStats.plateAppearances + plateAppearanceIncrement,
-          atBats: teamStats.atBats + atBatIncrement,
-          totalBases: teamStats.totalBases + totalBasesIncrement,
-        }
-
-        return {
-          away: battingTeam === 'away' ? nextTeamStats : prev.away,
-          home: battingTeam === 'home' ? nextTeamStats : prev.home,
-        }
-      })
-    }
-
-    throwSerialRef.current += 1
+    const nextThrowSerial = throwSerialRef.current + 1
 
     const result: ThrowResult = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      serial: throwSerialRef.current,
+      serial: nextThrowSerial,
       battingTeam,
       inningLabel: currentInningLabel,
       target,
@@ -1295,35 +1843,86 @@ function DartDemoPage() {
       outs: resolution.nextState.outs,
     }
 
+    let nextThrows = cloneThrowList(currentThrows)
+    let nextFieldThrows = cloneThrowList(currentFieldThrows)
+    let nextFieldThrowTurnKey = fieldThrowTurnKeyRef.current
+    let nextThrowSerialRefValue = nextThrowSerial
+    let nextClearFieldThrowsBeforeNextPitch = clearFieldThrowsBeforeNextPitchRef.current
+
     if (resolution.gameOver) {
-      setThrows([])
-      setFieldThrows([])
-      throwSerialRef.current = 0
-      clearFieldThrowsBeforeNextPitchRef.current = false
+      nextThrows = []
+      nextFieldThrows = []
+      nextFieldThrowTurnKey = null
+      nextThrowSerialRefValue = 0
+      nextClearFieldThrowsBeforeNextPitch = false
     } else {
-      setThrows((prev) => [result, ...prev].slice(0, 12))
-      setFieldThrows((prev) => {
-        const currentBatterThrows = clearFieldThrowsBeforeNextPitchRef.current ? [] : prev
-        const next = [...currentBatterThrows, result]
-
-        clearFieldThrowsBeforeNextPitchRef.current = resolution.halfInningOver || resolution.plateAppearanceOver
-        return next
-      })
+      nextThrows = [result, ...nextThrows]
+      const currentTurnKey = fieldThrowTurnKey(battingTeam, currentInningLabel)
+      const shouldResetForTurnChange = nextFieldThrowTurnKey !== null && nextFieldThrowTurnKey !== currentTurnKey
+      const currentBatterThrows = (nextClearFieldThrowsBeforeNextPitch || shouldResetForTurnChange) ? [] : nextFieldThrows
+      nextFieldThrows = [...currentBatterThrows, result]
+      nextFieldThrowTurnKey = currentTurnKey
+      nextClearFieldThrowsBeforeNextPitch = resolution.halfInningOver || resolution.plateAppearanceOver
     }
-    setStatus(
-      `${resolution.call} Zone: ${target === 'miss' ? `miss (${nearest} nearest)` : target}. Count ${postPlayState.balls}-${postPlayState.strikes}, outs ${postPlayState.outs}, ${inningLabel(postPlayState.inning, postPlayState.half)} (${postPlayState.battingTeam.toUpperCase()} batting).`,
-    )
 
-    const briefCall = resolution.call.split('. ')[0]
-    setLastThrowBanner(briefCall)
-    if (lastThrowBannerTimeoutRef.current !== null) {
-      window.clearTimeout(lastThrowBannerTimeoutRef.current)
-    }
-    lastThrowBannerTimeoutRef.current = window.setTimeout(() => {
-      setLastThrowBanner(null)
-    }, 1600)
+    const nextStatus = `${resolution.call} Zone: ${target === 'miss' ? `miss (${nearest} nearest)` : target}. Count ${postPlayState.balls}-${postPlayState.strikes}, outs ${postPlayState.outs}, ${inningLabel(postPlayState.inning, postPlayState.half)} (${postPlayState.battingTeam.toUpperCase()} batting).`
 
+    const briefCall = `${battingTeam.toUpperCase()} - ${resolution.call.split('. ')[0]}`
+    const followUpBanner = resolution.halfInningOver ? `${postPlayState.battingTeam.toUpperCase()} up` : null
+
+    const afterState = snapshotReplayState({
+      gameState: nextGameState,
+      gameStats: nextGameStats,
+      throws: nextThrows,
+      fieldThrows: nextFieldThrows,
+      fieldThrowTurnKey: nextFieldThrowTurnKey,
+      lastThrowBanner: briefCall,
+      followUpBanner,
+      status: nextStatus,
+      pullQualityLabel: qualitySummary,
+      throwSerial: nextThrowSerialRefValue,
+      clearFieldThrowsBeforeNextPitch: nextClearFieldThrowsBeforeNextPitch,
+    })
+
+    const committedGameState = cloneGameState(nextGameState)
+    const committedGameStats = cloneGameStats(nextGameStats)
+    const committedThrows = cloneThrowList(nextThrows)
+    const committedFieldThrows = cloneThrowList(nextFieldThrows)
+
+    gameStateRef.current = committedGameState
+    gameStatsRef.current = committedGameStats
+    throwsRef.current = committedThrows
+    fieldThrowsRef.current = committedFieldThrows
+    fieldThrowTurnKeyRef.current = nextFieldThrowTurnKey
+    statusRef.current = nextStatus
+    pullQualityLabelRef.current = qualitySummary
+
+    setGameState(committedGameState)
+    setGameStats(committedGameStats)
+    setThrows(committedThrows)
+    setFieldThrows(committedFieldThrows)
+    throwSerialRef.current = nextThrowSerialRefValue
+    clearFieldThrowsBeforeNextPitchRef.current = nextClearFieldThrowsBeforeNextPitch
+    setStatus(nextStatus)
+    showBannerSequence(briefCall, followUpBanner)
     setPullQualityLabel(qualitySummary)
+
+    const nextHistory = ((prev: ThrowHistoryState) => {
+      const retainedEntries = prev.entries.slice(0, prev.cursor + 1)
+      const nextEntry: ThrowHistoryEntry = {
+        command,
+        before: beforeState,
+        after: afterState,
+      }
+      const nextEntries = [...retainedEntries, nextEntry]
+      return {
+        entries: nextEntries,
+        cursor: nextEntries.length - 1,
+      }
+    })(currentHistory)
+    throwHistoryRef.current = nextHistory
+    setThrowHistory(nextHistory)
+    publishStateUpdated(afterState, nextHistory)
   }
 
   function registerThrow(releasePoint: GesturePoint): void {
@@ -1489,10 +2088,12 @@ function DartDemoPage() {
           ? 'okay'
           : 'jerky'
 
-    finalizeThrow(
-      rawImpact,
-      impact,
-      `Pull: ${qualityText} (straight ${pullStraightness.toFixed(2)}). Flick speed: raw ${flickSpeed.toFixed(2)} px/ms (norm ${normalizedSpeed.toFixed(2)}, control ${flickControlFactor.toFixed(2)}, straight ${flickStraightness.toFixed(2)}). Pullback: ${Math.round(pullback)}px.`,
+    submitThrowCommand(
+      createThrowCommand(
+        rawImpact,
+        impact,
+        `Pull: ${qualityText} (straight ${pullStraightness.toFixed(2)}). Flick speed: raw ${flickSpeed.toFixed(2)} px/ms (norm ${normalizedSpeed.toFixed(2)}, control ${flickControlFactor.toFixed(2)}, straight ${flickStraightness.toFixed(2)}). Pullback: ${Math.round(pullback)}px.`,
+      ),
     )
   }
 
@@ -1554,26 +2155,26 @@ function DartDemoPage() {
 
   function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
     event.preventDefault()
+
+    if (hasRealtimeBridgeParams && !isMyTurn) {
+      setStatus(
+        `Waiting for ${gameState.battingTeam.toUpperCase()} to bat. You control ${controlledTeam?.toUpperCase() ?? 'N/A'}.`,
+      )
+      return
+    }
+
     const point = pointerToField(event.clientX, event.clientY, true)
 
     if (clickToThrowMode) {
-      setPrimaryAim({ x: point.x, y: point.y })
-      setAimZoneLabel('Click-to-throw test mode: throw resolved at selected point.')
-      finalizeThrow(point, point, 'Click-to-throw test mode: direct aim throw.')
+      submitThrowCommand(
+        createThrowCommand(point, point, ''),
+      )
       return
     }
 
     activePointerIdRef.current = event.pointerId
     event.currentTarget.setPointerCapture(event.pointerId)
-    const centerHit = resolveBaseballZoneHit(point)
-    const centerTarget = centerHit.zone?.id ?? `miss (${centerHit.nearest.id} nearest)`
-    const scoringHit = resolveBaseballZoneHit(point, DART_RADIUS_UNITS)
-    const scoringTarget = scoringHit.zone?.id ?? `miss (${scoringHit.nearest.id} nearest)`
-
     setPrimaryAim({ x: point.x, y: point.y })
-    setAimZoneLabel(
-      `Aim center zone: ${centerTarget}. Scoring zone (r=${DART_RADIUS_UNITS}): ${scoringTarget}.`,
-    )
     setStatus('Aim set. Pull back (inside or outside the field), then flick forward and release.')
     setIsDragging(true)
     gesturePathRef.current = [point]
@@ -1636,18 +2237,57 @@ function DartDemoPage() {
   }
 
   function handleReset(): void {
+    const resetStatus = 'Demo reset. Step 1: click a primary aim point in the target field.'
+    const resetGameState = initialGameState()
+    const resetGameStats = initialGameStats()
+    const resetHistory: ThrowHistoryState = { entries: [], cursor: -1 }
+
     activePointerIdRef.current = null
     clearFieldThrowsBeforeNextPitchRef.current = false
+    gameStateRef.current = resetGameState
+    gameStatsRef.current = resetGameStats
+    throwsRef.current = []
+    fieldThrowsRef.current = []
+    fieldThrowTurnKeyRef.current = null
+    lastThrowBannerRef.current = null
+    followUpBannerRef.current = null
+    throwHistoryRef.current = resetHistory
+    statusRef.current = resetStatus
+    pullQualityLabelRef.current = ''
     setThrows([])
     setFieldThrows([])
+    setLastThrowBanner(null)
     setPrimaryAim(null)
-    setAimZoneLabel('')
     gesturePathRef.current = []
     throwSerialRef.current = 0
     setPullQualityLabel('')
-    setGameState(initialGameState())
-    setGameStats(initialGameStats())
-    setStatus('Demo reset. Step 1: click a primary aim point in the target field.')
+    setGameState(resetGameState)
+    setGameStats(resetGameStats)
+    setThrowHistory(resetHistory)
+    if (lastThrowBannerTimeoutRef.current !== null) {
+      window.clearTimeout(lastThrowBannerTimeoutRef.current)
+      lastThrowBannerTimeoutRef.current = null
+    }
+    setStatus(resetStatus)
+
+    if (commandBusModeRef.current === 'host') {
+      publishStateUpdated(
+        snapshotReplayState({
+          gameState: resetGameState,
+          gameStats: resetGameStats,
+          throws: [],
+          fieldThrows: [],
+          fieldThrowTurnKey: null,
+          lastThrowBanner: null,
+          followUpBanner: null,
+          status: resetStatus,
+          pullQualityLabel: '',
+          throwSerial: 0,
+          clearFieldThrowsBeforeNextPitch: false,
+        }),
+        resetHistory,
+      )
+    }
   }
 
   return (
@@ -1763,7 +2403,7 @@ function DartDemoPage() {
                 ) : null}
               </svg>
 
-              {primaryAim ? (
+              {primaryAim && !clickToThrowMode ? (
                 <svg className="throw-vector throw-vector-field" viewBox={`0 0 ${FIELD_SIZE} ${FIELD_SIZE}`}>
                   <circle
                     cx={primaryAim.x}
@@ -1777,7 +2417,7 @@ function DartDemoPage() {
                 </svg>
               ) : null}
 
-              {primaryAim && dragPoint && isDragging ? (
+              {primaryAim && !clickToThrowMode && dragPoint && isDragging ? (
                 <svg className="throw-vector throw-vector-field" viewBox={`0 0 ${FIELD_SIZE} ${FIELD_SIZE}`}>
                   <line
                     x1={primaryAim.x}
@@ -1912,7 +2552,7 @@ function DartDemoPage() {
                 <div
                   className={`score-cell score-team score-team-away ${gameState.battingTeam === 'away' ? 'is-active-batting' : ''}`}
                 >
-                  AWAY{gameState.battingTeam === 'away' ? ' *' : ''}
+                  AWAY{gameState.battingTeam === 'away' ? ' *' : ''}{hasRealtimeBridgeParams && controlledTeam === 'away' ? ' (YOU)' : ''}
                 </div>
                 {scoreboardInnings.map((entry) => (
                   <div key={`away-${entry.inning}`} className={`score-cell ${entry.isCurrent ? 'is-current-inning' : ''}`}>
@@ -1924,7 +2564,7 @@ function DartDemoPage() {
                 <div
                   className={`score-cell score-team score-team-home ${gameState.battingTeam === 'home' ? 'is-active-batting' : ''}`}
                 >
-                  HOME{gameState.battingTeam === 'home' ? ' *' : ''}
+                  HOME{gameState.battingTeam === 'home' ? ' *' : ''}{hasRealtimeBridgeParams && controlledTeam === 'home' ? ' (YOU)' : ''}
                 </div>
                 {scoreboardInnings.map((entry) => (
                   <div key={`home-${entry.inning}`} className={`score-cell ${entry.isCurrent ? 'is-current-inning' : ''}`}>
@@ -1934,44 +2574,45 @@ function DartDemoPage() {
                 <div className="score-cell score-total">{gameState.homeTotalRuns}</div>
               </div>
             </div>
+
+            <div className="runner-controls" aria-label="Throw mode controls">
+              <span className="runner-controls-label">Throw mode:</span>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={clickToThrowMode}
+                  onChange={(event) => setClickToThrowMode(event.target.checked)}
+                />
+                Click-to-throw test mode
+              </label>
+            </div>
           </div>
         </div>
-
-        <p className="saved-data">
-          Zone overlay: showing all {shownZones.length} zones.
-        </p>
-        {aimZoneLabel ? <p className="saved-data">{aimZoneLabel}</p> : null}
 
         <p className="status-text">{status}</p>
         {pullQualityLabel ? <p className="saved-data">{pullQualityLabel}</p> : null}
 
-        <div className="runner-controls" aria-label="Throw mode controls">
-          <span className="runner-controls-label">Throw mode:</span>
-          <label>
-            <input
-              type="checkbox"
-              checked={clickToThrowMode}
-              onChange={(event) => setClickToThrowMode(event.target.checked)}
-            />
-            Click-to-throw test mode
-          </label>
+        <div className="debug-panel" aria-label="Network debug panel">
+          <div className="debug-panel-title">Debug</div>
+          <div>Bridge: {networkDebug.bridgeEnabled ? (networkDebug.bridgeConnected ? 'connected' : 'configured') : 'disabled'}</div>
+          <div>Role: {networkDebug.role} | Bus: {networkDebug.busMode}</div>
+          <div>Room: {networkDebug.room}</div>
+          <div>Name: {networkDebug.name}</div>
+          <div>RT: {networkDebug.lastRealtimeStatus}</div>
+          <div>Last bus: {networkDebug.lastBusEvent}</div>
+          <div>Out: {networkDebug.outboundBusEvents} | In snapshots: {networkDebug.inboundSnapshots}</div>
+          {networkDebug.lastRealtimeError ? <div className="debug-panel-error">Err: {networkDebug.lastRealtimeError}</div> : null}
         </div>
 
-        <div className="runner-controls" aria-label="Batting state">
-          <span className="runner-controls-label">At bat:</span>
-          <span className={`batting-team-indicator batting-team-${gameState.battingTeam}`}>
-            {gameState.battingTeam.toUpperCase()} ({inningLabel(gameState.inning, gameState.half)})
-          </span>
-        </div>
-        <div className="runner-controls" aria-label="Base occupancy state">
-          <span className="runner-controls-label">Runners:</span>
-          <span>1B {gameState.baseRunners.first ? 'occupied' : 'empty'}</span>
-          <span>2B {gameState.baseRunners.second ? 'occupied' : 'empty'}</span>
-          <span>3B {gameState.baseRunners.third ? 'occupied' : 'empty'}</span>
-        </div>
         <div className="button-row">
           <button type="button" onClick={() => setShowReference((prev) => !prev)}>
             {showReference ? 'Hide Reference' : 'Show Reference'}
+          </button>
+          <button type="button" onClick={handleUndo} disabled={!canUndo}>
+            Undo Throw
+          </button>
+          <button type="button" onClick={handleRedo} disabled={!canRedo}>
+            Redo Throw
           </button>
           <button type="button" onClick={handleReset}>Reset Demo</button>
           <Link className="button-link ghost-link" to="/">
