@@ -15,6 +15,21 @@ type ThrowCommand = {
   qualitySummary: string
 }
 
+type TeamSide = 'away' | 'home'
+type TeamAssignment = TeamSide | 'spectator'
+
+type LineupRequestAction =
+  | { type: 'assign-team'; clientId: string; team: TeamAssignment }
+  | { type: 'move-batter'; team: TeamSide; clientId: string; direction: 'up' | 'down' }
+  | { type: 'start-game' }
+
+type LineupRequest = {
+  requestId: string
+  senderClientId: string | null
+  createdAt: number
+  action: LineupRequestAction
+}
+
 type ReplayState = unknown
 
 type ThrowHistoryState = {
@@ -26,6 +41,7 @@ type CommandBusOutboundEvent =
   | { type: 'throw-command'; command: ThrowCommand }
   | { type: 'undo-request' }
   | { type: 'redo-request' }
+  | { type: 'lineup-request'; request: LineupRequest }
   | { type: 'state-updated'; snapshot: ReplayState; history: ThrowHistoryState }
 
 type ThrowCommandBus = {
@@ -34,6 +50,7 @@ type ThrowCommandBus = {
   submitThrowCommand: (command: ThrowCommand) => void
   requestUndo: () => void
   requestRedo: () => void
+  applyLineupRequest: (request: LineupRequest) => void
   applyHostSnapshot: (snapshot: ReplayState, history: ThrowHistoryState) => void
   subscribe: (listener: (event: CommandBusOutboundEvent) => void) => () => void
 }
@@ -42,6 +59,7 @@ export type DartballBusWireMessage =
   | { type: 'throw-command'; command: ThrowCommand }
   | { type: 'undo-request' }
   | { type: 'redo-request' }
+  | { type: 'lineup-request'; request: LineupRequest }
   | { type: 'state-updated'; snapshot: ReplayState; history: ThrowHistoryState }
 
 export type DartballBusTransport = {
@@ -90,7 +108,12 @@ export function createDartballCommandBusAdapter(
   bus.setMode(options.mode)
 
   const unsubBus = bus.subscribe((event) => {
-    if (event.type === 'throw-command' || event.type === 'undo-request' || event.type === 'redo-request') {
+    if (
+      event.type === 'throw-command'
+      || event.type === 'undo-request'
+      || event.type === 'redo-request'
+      || event.type === 'lineup-request'
+    ) {
       options.transport.send(event)
       return
     }
@@ -128,6 +151,11 @@ export function createDartballCommandBusAdapter(
 
       if (message.type === 'redo-request') {
         currentBus.requestRedo()
+        return
+      }
+
+      if (message.type === 'lineup-request') {
+        currentBus.applyLineupRequest(message.request)
       }
       return
     }

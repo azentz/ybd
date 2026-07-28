@@ -44,6 +44,7 @@ type ThrowCommand = {
 type ReplayState = {
   gameState: GameState
   gameStats: GameStats
+  lineupState: LineupState
   throws: ThrowResult[]
   fieldThrows: ThrowResult[]
   fieldThrowTurnKey: string | null
@@ -72,6 +73,7 @@ type CommandBusOutboundEvent =
   | { type: 'throw-command'; command: ThrowCommand }
   | { type: 'undo-request' }
   | { type: 'redo-request' }
+  | { type: 'lineup-request'; request: LineupRequest }
   | { type: 'state-updated'; snapshot: ReplayState; history: ThrowHistoryState }
 
 type ThrowCommandBus = {
@@ -80,6 +82,7 @@ type ThrowCommandBus = {
   submitThrowCommand: (command: ThrowCommand) => void
   requestUndo: () => void
   requestRedo: () => void
+  applyLineupRequest: (request: LineupRequest) => void
   applyHostSnapshot: (snapshot: ReplayState, history: ThrowHistoryState) => void
   subscribe: (listener: (event: CommandBusOutboundEvent) => void) => () => void
 }
@@ -154,6 +157,30 @@ type GameStats = {
   home: TeamStats
 }
 
+type TeamSide = 'away' | 'home'
+type TeamAssignment = TeamSide | 'spectator'
+
+type LineupState = {
+  started: boolean
+  assignments: Record<string, TeamAssignment>
+  awayOrder: string[]
+  homeOrder: string[]
+  awayBatterIndex: number
+  homeBatterIndex: number
+}
+
+type LineupRequestAction =
+  | { type: 'assign-team'; clientId: string; team: TeamAssignment }
+  | { type: 'move-batter'; team: TeamSide; clientId: string; direction: 'up' | 'down' }
+  | { type: 'start-game' }
+
+type LineupRequest = {
+  requestId: string
+  senderClientId: string | null
+  createdAt: number
+  action: LineupRequestAction
+}
+
 type GesturePoint = Point & { t: number }
 
 declare global {
@@ -176,6 +203,7 @@ const MIN_FLICK_SPEED = 0.12
 const MAX_FLICK_SPEED = 2.2
 const MIN_CONTROL_FACTOR = 0.25
 const THROW_BANNER_DURATION_MS = 1600
+const MAX_TEAM_PLAYERS = 9
 const TAU = Math.PI * 2
 const OUTER_ARC_BULGE = 0
 const BASE_RUNNER_SCALE = 1.15
@@ -772,10 +800,124 @@ function cloneGameStats(stats: GameStats): GameStats {
   }
 }
 
+function initialLineupState(): LineupState {
+  return {
+    started: false,
+    assignments: {},
+    awayOrder: [],
+    homeOrder: [],
+    awayBatterIndex: 0,
+    homeBatterIndex: 0,
+  }
+}
+
+function cloneLineupState(lineupState: LineupState): LineupState {
+  return {
+    started: lineupState.started,
+    assignments: { ...lineupState.assignments },
+    awayOrder: [...lineupState.awayOrder],
+    homeOrder: [...lineupState.homeOrder],
+    awayBatterIndex: lineupState.awayBatterIndex,
+    homeBatterIndex: lineupState.homeBatterIndex,
+  }
+}
+
+function resolveTeamOrderFromAssignments(
+  preferredOrder: string[],
+  assignments: Record<string, TeamAssignment>,
+  participants: Participant[],
+  side: TeamSide,
+): string[] {
+  const selectedSet = new Set(
+    participants
+      .map((participant) => participant.clientId)
+      .filter((clientId) => assignments[clientId] === side),
+  )
+
+  const kept = preferredOrder.filter((clientId) => selectedSet.has(clientId))
+  const appended = Array.from(selectedSet).filter((clientId) => !kept.includes(clientId))
+  return [...kept, ...appended].slice(0, MAX_TEAM_PLAYERS)
+}
+
+function clampBatterIndex(index: number, orderLength: number): number {
+  if (orderLength <= 0) {
+    return 0
+  }
+
+  return ((index % orderLength) + orderLength) % orderLength
+}
+
+function reconcileLineupState(lineupState: LineupState, participants: Participant[]): LineupState {
+  const participantIds = new Set(participants.map((participant) => participant.clientId))
+
+  const nextAssignments: Record<string, TeamAssignment> = {}
+  for (const participant of participants) {
+    const prior = lineupState.assignments[participant.clientId]
+    nextAssignments[participant.clientId] = prior ?? 'spectator'
+  }
+
+  for (const clientId of Object.keys(nextAssignments)) {
+    if (!participantIds.has(clientId)) {
+      delete nextAssignments[clientId]
+    }
+  }
+
+  const nextAwayOrder = resolveTeamOrderFromAssignments(lineupState.awayOrder, nextAssignments, participants, 'away')
+  const nextHomeOrder = resolveTeamOrderFromAssignments(lineupState.homeOrder, nextAssignments, participants, 'home')
+  const hasPlayableTeams = nextAwayOrder.length > 0 && nextHomeOrder.length > 0
+
+  return {
+    started: lineupState.started && hasPlayableTeams,
+    assignments: nextAssignments,
+    awayOrder: nextAwayOrder,
+    homeOrder: nextHomeOrder,
+    awayBatterIndex: clampBatterIndex(lineupState.awayBatterIndex, nextAwayOrder.length),
+    homeBatterIndex: clampBatterIndex(lineupState.homeBatterIndex, nextHomeOrder.length),
+  }
+}
+
+function lineupStatesEqual(left: LineupState, right: LineupState): boolean {
+  if (left.started !== right.started) return false
+  if (left.awayBatterIndex !== right.awayBatterIndex) return false
+  if (left.homeBatterIndex !== right.homeBatterIndex) return false
+
+  const leftAssignments = Object.keys(left.assignments)
+  const rightAssignments = Object.keys(right.assignments)
+  if (leftAssignments.length !== rightAssignments.length) return false
+  for (const key of leftAssignments) {
+    if (left.assignments[key] !== right.assignments[key]) return false
+  }
+
+  if (left.awayOrder.length !== right.awayOrder.length) return false
+  if (left.homeOrder.length !== right.homeOrder.length) return false
+  for (let i = 0; i < left.awayOrder.length; i += 1) {
+    if (left.awayOrder[i] !== right.awayOrder[i]) return false
+  }
+  for (let i = 0; i < left.homeOrder.length; i += 1) {
+    if (left.homeOrder[i] !== right.homeOrder[i]) return false
+  }
+
+  return true
+}
+
+function summarizeLineupNames(lineupNames: string[]): string {
+  if (lineupNames.length === 0) {
+    return 'No players'
+  }
+
+  if (lineupNames.length <= 3) {
+    return lineupNames.join(', ')
+  }
+
+  const visible = lineupNames.slice(0, 3).join(', ')
+  return `${visible} +${lineupNames.length - 3}`
+}
+
 function snapshotReplayState(input: ReplayState): ReplayState {
   return {
     gameState: cloneGameState(input.gameState),
     gameStats: cloneGameStats(input.gameStats),
+    lineupState: cloneLineupState(input.lineupState),
     throws: cloneThrowList(input.throws),
     fieldThrows: cloneThrowList(input.fieldThrows),
     fieldThrowTurnKey: input.fieldThrowTurnKey,
@@ -1233,6 +1375,13 @@ function resolvePlay(gameState: GameState, outcome: PlayOutcome): PlayResolution
 
 function DartDemoPage() {
   const [searchParams] = useSearchParams()
+  const roleParam = searchParams.get('role')
+  const roomParam = searchParams.get('room')
+  const nameParam = searchParams.get('name')
+  const hasRealtimeBridgeParams =
+    !!roomParam?.trim()
+    && !!nameParam?.trim()
+    && (roleParam === 'host' || roleParam === 'guest')
   const fieldRef = useRef<HTMLDivElement | null>(null)
   const throwSerialRef = useRef(0)
   const activePointerIdRef = useRef<number | null>(null)
@@ -1242,6 +1391,7 @@ function DartDemoPage() {
   const submitThrowCommandRef = useRef<(command: ThrowCommand) => void>(() => {})
   const handleUndoRef = useRef<() => void>(() => {})
   const handleRedoRef = useRef<() => void>(() => {})
+  const applyLineupRequestRef = useRef<(request: LineupRequest) => void>(() => {})
   const applyHostSnapshotRef = useRef<(snapshot: ReplayState, history: ThrowHistoryState) => void>(() => {})
 
   const [dragPoint, setDragPoint] = useState<Point | null>(null)
@@ -1256,7 +1406,9 @@ function DartDemoPage() {
   const [clickToThrowMode, setClickToThrowMode] = useState(false)
   const [gameState, setGameState] = useState<GameState>(initialGameState)
   const [gameStats, setGameStats] = useState<GameStats>(initialGameStats)
+  const [lineupState, setLineupState] = useState<LineupState>(initialLineupState)
   const [throwHistory, setThrowHistory] = useState<ThrowHistoryState>({ entries: [], cursor: -1 })
+  const [localClientId, setLocalClientId] = useState<string | null>(null)
   const [participants, setParticipants] = useState<Participant[]>([])
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [chatInput, setChatInput] = useState('')
@@ -1264,6 +1416,7 @@ function DartDemoPage() {
   const [connectionError, setConnectionError] = useState('')
   const gameStateRef = useRef<GameState>(gameState)
   const gameStatsRef = useRef<GameStats>(gameStats)
+  const lineupStateRef = useRef<LineupState>(lineupState)
   const throwsRef = useRef<ThrowResult[]>(throws)
   const fieldThrowsRef = useRef<ThrowResult[]>(fieldThrows)
   const fieldThrowTurnKeyRef = useRef<string | null>(null)
@@ -1272,6 +1425,7 @@ function DartDemoPage() {
   const throwHistoryRef = useRef<ThrowHistoryState>(throwHistory)
   const statusRef = useRef<string>(status)
   const pullQualityLabelRef = useRef<string>(pullQualityLabel)
+  const participantsRef = useRef<Participant[]>(participants)
   const [networkDebug, setNetworkDebug] = useState<NetworkDebugState>({
     bridgeEnabled: false,
     bridgeConnected: false,
@@ -1378,23 +1532,30 @@ function DartDemoPage() {
   const ops = formatThreeDecimalStat(obpValue + slgValue)
   const canUndo = throwHistory.cursor >= 0
   const canRedo = throwHistory.cursor < throwHistory.entries.length - 1
-  const roleParam = searchParams.get('role')
-  const roomParam = searchParams.get('room')
-  const nameParam = searchParams.get('name')
-  const hasRealtimeBridgeParams =
-    !!roomParam?.trim()
-    && !!nameParam?.trim()
-    && (roleParam === 'host' || roleParam === 'guest')
-  const controlledTeam = roleParam === 'host' ? 'home' : roleParam === 'guest' ? 'away' : null
+  const activeOrder = gameState.battingTeam === 'away' ? lineupState.awayOrder : lineupState.homeOrder
+  const activeBatterIndex = gameState.battingTeam === 'away' ? lineupState.awayBatterIndex : lineupState.homeBatterIndex
+  const activeBatterClientId = activeOrder.length > 0
+    ? activeOrder[clampBatterIndex(activeBatterIndex, activeOrder.length)]
+    : null
+  const activeBatterParticipant = participants.find((participant) => participant.clientId === activeBatterClientId) ?? null
+  const activeBatterName = activeBatterParticipant?.name ?? (activeBatterClientId === 'host' ? 'Host' : 'TBD')
+  const awayOrderNames = lineupState.awayOrder.map((clientId) => {
+    const participant = participants.find((candidate) => candidate.clientId === clientId)
+    return participant?.name ?? 'Unknown player'
+  })
+  const homeOrderNames = lineupState.homeOrder.map((clientId) => {
+    const participant = participants.find((candidate) => candidate.clientId === clientId)
+    return participant?.name ?? 'Unknown player'
+  })
+  const awayTeamLabel = summarizeLineupNames(awayOrderNames)
+  const homeTeamLabel = summarizeLineupNames(homeOrderNames)
+  const battingPlayerName = activeBatterName
+  const canStartLineupGame = lineupState.awayOrder.length > 0 && lineupState.homeOrder.length > 0
+  const isHostController = hasRealtimeBridgeParams && roleParam === 'host'
+  const localParticipant = participants.find((participant) => participant.clientId === localClientId) ?? null
+  const localAssignment = localClientId ? (lineupState.assignments[localClientId] ?? 'spectator') : 'spectator'
   const isMyTurn = !hasRealtimeBridgeParams
-    || (controlledTeam !== null && gameState.battingTeam === controlledTeam)
-  const hostParticipantName = participants.find((participant) => participant.isHost)?.name
-  const awayParticipantName = participants.find((participant) => !participant.isHost)?.name
-  const homePlayerName = hostParticipantName
-    ?? (roleParam === 'host' ? (nameParam?.trim() || 'Host') : 'Host')
-  const awayPlayerName = awayParticipantName
-    ?? (roleParam === 'guest' ? (nameParam?.trim() || 'Guest') : 'Guest')
-  const battingPlayerName = gameState.battingTeam === 'away' ? awayPlayerName : homePlayerName
+    || (lineupState.started && !!localClientId && localClientId === activeBatterClientId)
 
   useEffect(() => {
     if (!hasRealtimeBridgeParams || isMyTurn) {
@@ -1415,6 +1576,14 @@ function DartDemoPage() {
   useEffect(() => {
     gameStatsRef.current = gameStats
   }, [gameStats])
+
+  useEffect(() => {
+    lineupStateRef.current = lineupState
+  }, [lineupState])
+
+  useEffect(() => {
+    participantsRef.current = participants
+  }, [participants])
 
   useEffect(() => {
     throwsRef.current = throws
@@ -1446,17 +1615,38 @@ function DartDemoPage() {
       setChatMessages([])
       setConnectionStatus('Not connected')
       setConnectionError('')
+      setLocalClientId(roleParam === 'host' ? 'host' : null)
       return
     }
 
+    setLocalClientId(realtimeClient.getLocalClientId())
+
     const unsubscribe = realtimeClient.subscribe((event) => {
       if (event.type === 'status') {
+        setLocalClientId(realtimeClient.getLocalClientId())
         setConnectionStatus(event.value)
         return
       }
 
       if (event.type === 'participants') {
+        const knownLocalClientId = realtimeClient.getLocalClientId()
+        if (knownLocalClientId) {
+          setLocalClientId(knownLocalClientId)
+        } else {
+          const localPeerId = realtimeClient.getLocalPeerId()
+          const localParticipant = event.value.find((participant) => participant.peerId === localPeerId)
+          setLocalClientId(localParticipant?.clientId ?? null)
+        }
         setParticipants(event.value)
+
+        const reconciledLineup = reconcileLineupState(lineupStateRef.current, event.value)
+        if (!lineupStatesEqual(reconciledLineup, lineupStateRef.current)) {
+          lineupStateRef.current = reconciledLineup
+          setLineupState(cloneLineupState(reconciledLineup))
+          if (commandBusModeRef.current === 'host') {
+            publishCurrentAuthoritativeState()
+          }
+        }
         return
       }
 
@@ -1473,7 +1663,7 @@ function DartDemoPage() {
     return () => {
       unsubscribe()
     }
-  }, [hasRealtimeBridgeParams])
+  }, [hasRealtimeBridgeParams, roleParam])
 
   function emitCommandBusEvent(event: CommandBusOutboundEvent): void {
     setNetworkDebug((prev) => ({
@@ -1497,6 +1687,18 @@ function DartDemoPage() {
 
     realtimeClient.sendChat(chatInput)
     setChatInput('')
+  }
+
+  function handleAssignTeam(clientId: string, team: TeamAssignment): void {
+    submitLineupRequest({ type: 'assign-team', clientId, team })
+  }
+
+  function handleMoveBatter(team: TeamSide, clientId: string, direction: 'up' | 'down'): void {
+    submitLineupRequest({ type: 'move-batter', team, clientId, direction })
+  }
+
+  function handleStartGame(): void {
+    submitLineupRequest({ type: 'start-game' })
   }
 
   function handleReconnect(): void {
@@ -1545,11 +1747,13 @@ function DartDemoPage() {
   function applyReplayState(state: ReplayState): void {
     const nextGameState = cloneGameState(state.gameState)
     const nextGameStats = cloneGameStats(state.gameStats)
+    const nextLineupState = cloneLineupState(state.lineupState)
     const nextThrows = cloneThrowList(state.throws)
     const nextFieldThrows = cloneThrowList(state.fieldThrows)
 
     gameStateRef.current = nextGameState
     gameStatsRef.current = nextGameStats
+    lineupStateRef.current = nextLineupState
     throwsRef.current = nextThrows
     fieldThrowsRef.current = nextFieldThrows
     fieldThrowTurnKeyRef.current = state.fieldThrowTurnKey ?? resolveFieldThrowTurnKeyFromThrows(nextFieldThrows)
@@ -1560,6 +1764,7 @@ function DartDemoPage() {
 
     setGameState(nextGameState)
     setGameStats(nextGameStats)
+    setLineupState(nextLineupState)
     setThrows(nextThrows)
     setFieldThrows(nextFieldThrows)
     setStatus(state.status)
@@ -1589,6 +1794,138 @@ function DartDemoPage() {
       snapshot: snapshotReplayState(snapshot),
       history: cloneThrowHistoryState(history),
     })
+  }
+
+  function publishCurrentAuthoritativeState(nextStatus?: string): void {
+    if (commandBusModeRef.current !== 'host') {
+      return
+    }
+
+    const snapshot = snapshotReplayState({
+      gameState: gameStateRef.current,
+      gameStats: gameStatsRef.current,
+      lineupState: lineupStateRef.current,
+      throws: throwsRef.current,
+      fieldThrows: fieldThrowsRef.current,
+      fieldThrowTurnKey: fieldThrowTurnKeyRef.current,
+      lastThrowBanner: lastThrowBannerRef.current,
+      followUpBanner: followUpBannerRef.current,
+      status: nextStatus ?? statusRef.current,
+      pullQualityLabel: pullQualityLabelRef.current,
+      throwSerial: throwSerialRef.current,
+      clearFieldThrowsBeforeNextPitch: clearFieldThrowsBeforeNextPitchRef.current,
+    })
+
+    if (nextStatus !== undefined) {
+      statusRef.current = nextStatus
+      setStatus(nextStatus)
+    }
+
+    publishStateUpdated(snapshot, throwHistoryRef.current)
+  }
+
+  function applyLineupRequest(request: LineupRequest): void {
+    if (commandBusModeRef.current !== 'host') {
+      return
+    }
+
+    const currentLineup = lineupStateRef.current
+
+    if (request.action.type === 'start-game') {
+      const nextLineup = cloneLineupState(currentLineup)
+      const canStart = nextLineup.awayOrder.length > 0 && nextLineup.homeOrder.length > 0
+      if (!canStart) {
+        setStatus('Need at least one batter on AWAY and HOME before starting.')
+        return
+      }
+
+      nextLineup.started = true
+      nextLineup.awayBatterIndex = 0
+      nextLineup.homeBatterIndex = 0
+
+      const resetStatus = 'Game started. Step 1: click a primary aim point in the target field.'
+      const resetGameState = initialGameState()
+      const resetGameStats = initialGameStats()
+      const resetHistory: ThrowHistoryState = { entries: [], cursor: -1 }
+
+      clearFieldThrowsBeforeNextPitchRef.current = false
+      gameStateRef.current = resetGameState
+      gameStatsRef.current = resetGameStats
+      lineupStateRef.current = nextLineup
+      throwsRef.current = []
+      fieldThrowsRef.current = []
+      fieldThrowTurnKeyRef.current = null
+      lastThrowBannerRef.current = null
+      followUpBannerRef.current = null
+      throwHistoryRef.current = resetHistory
+      statusRef.current = resetStatus
+      pullQualityLabelRef.current = ''
+      throwSerialRef.current = 0
+
+      setThrows([])
+      setFieldThrows([])
+      setLastThrowBanner(null)
+      setPrimaryAim(null)
+      gesturePathRef.current = []
+      setPullQualityLabel('')
+      setGameState(resetGameState)
+      setGameStats(resetGameStats)
+      setLineupState(cloneLineupState(nextLineup))
+      setThrowHistory(resetHistory)
+      if (lastThrowBannerTimeoutRef.current !== null) {
+        window.clearTimeout(lastThrowBannerTimeoutRef.current)
+        lastThrowBannerTimeoutRef.current = null
+      }
+      setStatus(resetStatus)
+
+      publishCurrentAuthoritativeState(resetStatus)
+      return
+    }
+
+    if (currentLineup.started) {
+      setStatus('Lineups are locked after game start. Use Reset to configure a new game.')
+      return
+    }
+
+    const nextLineup = cloneLineupState(currentLineup)
+
+    if (request.action.type === 'assign-team') {
+      const action = request.action
+      nextLineup.assignments[action.clientId] = action.team
+      const reconciled = reconcileLineupState(nextLineup, participantsRef.current)
+      lineupStateRef.current = reconciled
+      setLineupState(cloneLineupState(reconciled))
+      publishCurrentAuthoritativeState()
+      return
+    }
+
+    if (request.action.type === 'move-batter') {
+      const action = request.action
+      const order = action.team === 'away' ? [...nextLineup.awayOrder] : [...nextLineup.homeOrder]
+      const currentIndex = order.indexOf(action.clientId)
+      if (currentIndex < 0) {
+        return
+      }
+
+      const targetIndex = action.direction === 'up' ? currentIndex - 1 : currentIndex + 1
+      if (targetIndex < 0 || targetIndex >= order.length) {
+        return
+      }
+
+      const moved = order[currentIndex]
+      order[currentIndex] = order[targetIndex]
+      order[targetIndex] = moved
+      if (action.team === 'away') {
+        nextLineup.awayOrder = order
+      } else {
+        nextLineup.homeOrder = order
+      }
+
+      const reconciled = reconcileLineupState(nextLineup, participantsRef.current)
+      lineupStateRef.current = reconciled
+      setLineupState(cloneLineupState(reconciled))
+      publishCurrentAuthoritativeState()
+    }
   }
 
   function handleUndo(): void {
@@ -1638,6 +1975,7 @@ function DartDemoPage() {
   submitThrowCommandRef.current = submitThrowCommand
   handleUndoRef.current = handleUndo
   handleRedoRef.current = handleRedo
+  applyLineupRequestRef.current = applyLineupRequest
   applyHostSnapshotRef.current = applyHostSnapshot
 
   useEffect(() => {
@@ -1659,6 +1997,9 @@ function DartDemoPage() {
       },
       requestRedo: () => {
         handleRedoRef.current()
+      },
+      applyLineupRequest: (request) => {
+        applyLineupRequestRef.current(request)
       },
       applyHostSnapshot: (snapshot, history) => {
         applyHostSnapshotRef.current(snapshot, history)
@@ -1810,9 +2151,26 @@ function DartDemoPage() {
     finalizeThrow(cloneThrowCommand(command))
   }
 
+  function submitLineupRequest(action: LineupRequestAction): void {
+    const request: LineupRequest = {
+      requestId: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      senderClientId: localClientId,
+      createdAt: Date.now(),
+      action,
+    }
+
+    if (commandBusModeRef.current === 'client') {
+      emitCommandBusEvent({ type: 'lineup-request', request })
+      return
+    }
+
+    applyLineupRequest(request)
+  }
+
   function finalizeThrow(command: ThrowCommand): void {
     const currentGameState = gameStateRef.current
     const currentGameStats = gameStatsRef.current
+    const currentLineupState = lineupStateRef.current
     const currentThrows = throwsRef.current
     const currentFieldThrows = fieldThrowsRef.current
     const currentStatus = statusRef.current
@@ -1826,6 +2184,7 @@ function DartDemoPage() {
     const beforeState = snapshotReplayState({
       gameState: currentGameState,
       gameStats: currentGameStats,
+      lineupState: currentLineupState,
       throws: currentThrows,
       fieldThrows: currentFieldThrows,
       fieldThrowTurnKey: fieldThrowTurnKeyRef.current,
@@ -1934,6 +2293,23 @@ function DartDemoPage() {
       nextClearFieldThrowsBeforeNextPitch = resolution.halfInningOver || resolution.plateAppearanceOver
     }
 
+    const nextLineupState = cloneLineupState(currentLineupState)
+    if (resolution.plateAppearanceOver && !resolution.gameOver) {
+      if (battingTeam === 'away' && nextLineupState.awayOrder.length > 0) {
+        nextLineupState.awayBatterIndex = clampBatterIndex(
+          nextLineupState.awayBatterIndex + 1,
+          nextLineupState.awayOrder.length,
+        )
+      }
+
+      if (battingTeam === 'home' && nextLineupState.homeOrder.length > 0) {
+        nextLineupState.homeBatterIndex = clampBatterIndex(
+          nextLineupState.homeBatterIndex + 1,
+          nextLineupState.homeOrder.length,
+        )
+      }
+    }
+
     const nextStatus = `${resolution.call} Zone: ${target === 'miss' ? `miss (${nearest} nearest)` : target}. Count ${postPlayState.balls}-${postPlayState.strikes}, outs ${postPlayState.outs}, ${inningLabel(postPlayState.inning, postPlayState.half)} (${postPlayState.battingTeam.toUpperCase()} batting).`
 
     const briefCall = `${battingTeam.toUpperCase()} - ${resolution.call.split('. ')[0]}`
@@ -1942,6 +2318,7 @@ function DartDemoPage() {
     const afterState = snapshotReplayState({
       gameState: nextGameState,
       gameStats: nextGameStats,
+      lineupState: nextLineupState,
       throws: nextThrows,
       fieldThrows: nextFieldThrows,
       fieldThrowTurnKey: nextFieldThrowTurnKey,
@@ -1955,11 +2332,13 @@ function DartDemoPage() {
 
     const committedGameState = cloneGameState(nextGameState)
     const committedGameStats = cloneGameStats(nextGameStats)
+    const committedLineupState = cloneLineupState(nextLineupState)
     const committedThrows = cloneThrowList(nextThrows)
     const committedFieldThrows = cloneThrowList(nextFieldThrows)
 
     gameStateRef.current = committedGameState
     gameStatsRef.current = committedGameStats
+    lineupStateRef.current = committedLineupState
     throwsRef.current = committedThrows
     fieldThrowsRef.current = committedFieldThrows
     fieldThrowTurnKeyRef.current = nextFieldThrowTurnKey
@@ -1968,6 +2347,7 @@ function DartDemoPage() {
 
     setGameState(committedGameState)
     setGameStats(committedGameStats)
+    setLineupState(committedLineupState)
     setThrows(committedThrows)
     setFieldThrows(committedFieldThrows)
     throwSerialRef.current = nextThrowSerialRefValue
@@ -2227,7 +2607,7 @@ function DartDemoPage() {
 
     if (hasRealtimeBridgeParams && !isMyTurn) {
       setStatus(
-        `Waiting for ${gameState.battingTeam.toUpperCase()} to bat. You control ${controlledTeam?.toUpperCase() ?? 'N/A'}.`,
+        `Waiting for ${activeBatterName} to throw for ${gameState.battingTeam.toUpperCase()}.`,
       )
       return
     }
@@ -2310,11 +2690,18 @@ function DartDemoPage() {
     const resetGameState = initialGameState()
     const resetGameStats = initialGameStats()
     const resetHistory: ThrowHistoryState = { entries: [], cursor: -1 }
+    const resetLineupState = {
+      ...reconcileLineupState(lineupStateRef.current, participantsRef.current),
+      started: false,
+      awayBatterIndex: 0,
+      homeBatterIndex: 0,
+    }
 
     activePointerIdRef.current = null
     clearFieldThrowsBeforeNextPitchRef.current = false
     gameStateRef.current = resetGameState
     gameStatsRef.current = resetGameStats
+    lineupStateRef.current = resetLineupState
     throwsRef.current = []
     fieldThrowsRef.current = []
     fieldThrowTurnKeyRef.current = null
@@ -2332,6 +2719,7 @@ function DartDemoPage() {
     setPullQualityLabel('')
     setGameState(resetGameState)
     setGameStats(resetGameStats)
+    setLineupState(cloneLineupState(resetLineupState))
     setThrowHistory(resetHistory)
     if (lastThrowBannerTimeoutRef.current !== null) {
       window.clearTimeout(lastThrowBannerTimeoutRef.current)
@@ -2344,6 +2732,7 @@ function DartDemoPage() {
         snapshotReplayState({
           gameState: resetGameState,
           gameStats: resetGameStats,
+          lineupState: resetLineupState,
           throws: [],
           fieldThrows: [],
           fieldThrowTurnKey: null,
@@ -2595,6 +2984,9 @@ function DartDemoPage() {
                 <div className={`field-stats-title batting-team-${gameState.battingTeam}`}>
                   {gameState.battingTeam.toUpperCase()} batting - {battingPlayerName}
                 </div>
+                {!lineupState.started ? (
+                  <div className="saved-data">Waiting for host to start game.</div>
+                ) : null}
                 <div className="field-stats-grid">
                   <span>AVG</span>
                   <strong>{battingAvg}</strong>
@@ -2621,7 +3013,7 @@ function DartDemoPage() {
                 <div
                   className={`score-cell score-team score-team-away ${gameState.battingTeam === 'away' ? 'is-active-batting' : ''}`}
                 >
-                  AWAY{gameState.battingTeam === 'away' ? ' *' : ''} - {awayPlayerName}
+                  AWAY{gameState.battingTeam === 'away' ? ' *' : ''} - {awayTeamLabel}
                 </div>
                 {scoreboardInnings.map((entry) => (
                   <div key={`away-${entry.inning}`} className={`score-cell ${entry.isCurrent ? 'is-current-inning' : ''}`}>
@@ -2633,7 +3025,7 @@ function DartDemoPage() {
                 <div
                   className={`score-cell score-team score-team-home ${gameState.battingTeam === 'home' ? 'is-active-batting' : ''}`}
                 >
-                  HOME{gameState.battingTeam === 'home' ? ' *' : ''} - {homePlayerName}
+                  HOME{gameState.battingTeam === 'home' ? ' *' : ''} - {homeTeamLabel}
                 </div>
                 {scoreboardInnings.map((entry) => (
                   <div key={`home-${entry.inning}`} className={`score-cell ${entry.isCurrent ? 'is-current-inning' : ''}`}>
@@ -2736,6 +3128,152 @@ function DartDemoPage() {
             <button type="button" className="ghost" onClick={handleReconnect}>
               {roleParam === 'host' ? 'Rebind Host Room' : 'Reconnect'}
             </button>
+          </div>
+
+          <div className="lineup-setup" aria-label="Team assignments and batting order">
+            <h3>Pregame Lineup</h3>
+            <p className="saved-data">
+              {lineupState.started
+                ? `Live game. ${gameState.battingTeam.toUpperCase()} batter: ${activeBatterName}`
+                : `Waiting to start. AWAY: ${lineupState.awayOrder.length} | HOME: ${lineupState.homeOrder.length}`}
+            </p>
+
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Player</th>
+                    <th>Role</th>
+                    <th>Team</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {participants.map((participant) => {
+                    const assignment = lineupState.assignments[participant.clientId] ?? 'spectator'
+                    return (
+                      <tr key={participant.clientId}>
+                        <td>{participant.name}{participant.clientId === localClientId ? ' (you)' : ''}</td>
+                        <td>{participant.isHost ? 'Host' : 'Guest'}</td>
+                        <td>
+                          {isHostController && !lineupState.started ? (
+                            <select
+                              value={assignment}
+                              onChange={(event) => {
+                                handleAssignTeam(participant.clientId, event.target.value as TeamAssignment)
+                              }}
+                            >
+                              <option value="spectator">Spectator</option>
+                              <option value="away">Away</option>
+                              <option value="home">Home</option>
+                            </select>
+                          ) : (
+                            assignment.toUpperCase()
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {!isHostController && !lineupState.started && localParticipant ? (
+              <div className="button-row">
+                <span className="saved-data">My team: {localAssignment.toUpperCase()}</span>
+                <button
+                  type="button"
+                  className={localAssignment === 'away' ? '' : 'ghost'}
+                  onClick={() => handleAssignTeam(localParticipant.clientId, 'away')}
+                >
+                  Join Away
+                </button>
+                <button
+                  type="button"
+                  className={localAssignment === 'home' ? '' : 'ghost'}
+                  onClick={() => handleAssignTeam(localParticipant.clientId, 'home')}
+                >
+                  Join Home
+                </button>
+                <button
+                  type="button"
+                  className={localAssignment === 'spectator' ? '' : 'ghost'}
+                  onClick={() => handleAssignTeam(localParticipant.clientId, 'spectator')}
+                >
+                  Spectate
+                </button>
+              </div>
+            ) : null}
+
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>AWAY Order</th>
+                    <th>HOME Order</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Array.from({ length: Math.max(lineupState.awayOrder.length, lineupState.homeOrder.length, 1) }, (_, index) => {
+                    const awayClientId = lineupState.awayOrder[index]
+                    const homeClientId = lineupState.homeOrder[index]
+                    const awayName = awayClientId
+                      ? (participants.find((participant) => participant.clientId === awayClientId)?.name ?? 'Unknown')
+                      : ''
+                    const homeName = homeClientId
+                      ? (participants.find((participant) => participant.clientId === homeClientId)?.name ?? 'Unknown')
+                      : ''
+
+                    return (
+                      <tr key={`order-row-${index}`}>
+                        <td>
+                          {awayName ? `${index + 1}. ${awayName}` : ''}
+                          {isHostController && !lineupState.started && awayClientId ? (
+                            <span>
+                              {' '}
+                              <button type="button" onClick={() => handleMoveBatter('away', awayClientId, 'up')} disabled={index === 0}>↑</button>
+                              <button
+                                type="button"
+                                onClick={() => handleMoveBatter('away', awayClientId, 'down')}
+                                disabled={index >= lineupState.awayOrder.length - 1}
+                              >
+                                ↓
+                              </button>
+                            </span>
+                          ) : null}
+                        </td>
+                        <td>
+                          {homeName ? `${index + 1}. ${homeName}` : ''}
+                          {isHostController && !lineupState.started && homeClientId ? (
+                            <span>
+                              {' '}
+                              <button type="button" onClick={() => handleMoveBatter('home', homeClientId, 'up')} disabled={index === 0}>↑</button>
+                              <button
+                                type="button"
+                                onClick={() => handleMoveBatter('home', homeClientId, 'down')}
+                                disabled={index >= lineupState.homeOrder.length - 1}
+                              >
+                                ↓
+                              </button>
+                            </span>
+                          ) : null}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {isHostController ? (
+              <div className="button-row">
+                <button type="button" onClick={handleStartGame} disabled={!canStartLineupGame || lineupState.started}>
+                  {lineupState.started ? 'Game Started' : 'Start Game'}
+                </button>
+                {!canStartLineupGame && !lineupState.started ? (
+                  <span className="saved-data">Need at least one batter on each team.</span>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           <div className="chat-box" aria-live="polite">

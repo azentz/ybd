@@ -361,6 +361,22 @@ class RealtimeClient {
     this.connectGuestToHost()
   }
 
+  getLocalClientId(): string | null {
+    if (this.role === 'host') {
+      return 'host'
+    }
+
+    if (this.role === 'guest') {
+      return this.guestClientId || null
+    }
+
+    return null
+  }
+
+  getLocalPeerId(): string | null {
+    return this.peer?.id ?? null
+  }
+
   disconnect(): void {
     this.manualDisconnect = true
 
